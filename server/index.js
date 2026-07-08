@@ -23,10 +23,12 @@ app.use(express.static(path.join(__dirname, "..", "client")));
 const PLAYER_COLORS = [0xff5555, 0x55ff99, 0x5599ff, 0xffdd55, 0xff77dd, 0x77ffe0];
 
 // ---- 시작의 섬 지형 ----
-const MAP_COLS = 50;
-const MAP_ROWS = 50;
-const ISLAND_RADIUS = 20;
-const COAST_BAND = 3;
+// 이전(50x50, 반지름20)은 카메라가 움직일 여지가 거의 없을 만큼 작았어서
+// 면적 기준 약 10배로 키움. 절차적 생성이라 숫자만 키우면 됨.
+const MAP_COLS = 160;
+const MAP_ROWS = 160;
+const ISLAND_RADIUS = 65;
+const COAST_BAND = 5;
 
 const mapData = generateIslandMap({
   cols: MAP_COLS,
@@ -38,13 +40,21 @@ const mapData = generateIslandMap({
 const WORLD_WIDTH = MAP_COLS * TILE_SIZE;
 const WORLD_HEIGHT = MAP_ROWS * TILE_SIZE;
 
-function randomLandSpawn() {
+// nearCenter: true면 섬 중앙 부근(플레이어 스폰용), false면 섬 전체에서 무작위(아이템 스폰용)
+function randomLandSpawn({ nearCenter = false } = {}) {
   const cx = Math.floor(MAP_COLS / 2);
   const cy = Math.floor(MAP_ROWS / 2);
 
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const gx = cx + Math.floor(Math.random() * 16 - 8);
-    const gy = cy + Math.floor(Math.random() * 16 - 8);
+  for (let attempt = 0; attempt < 80; attempt++) {
+    let gx;
+    let gy;
+    if (nearCenter) {
+      gx = cx + Math.floor(Math.random() * 20 - 10);
+      gy = cy + Math.floor(Math.random() * 20 - 10);
+    } else {
+      gx = Math.floor(Math.random() * MAP_COLS);
+      gy = Math.floor(Math.random() * MAP_ROWS);
+    }
     const tile = mapData[gy]?.[gx];
     if (tile !== undefined && isLandTile(tile)) {
       return { x: gx * TILE_SIZE + TILE_SIZE / 2, y: gy * TILE_SIZE + TILE_SIZE / 2 };
@@ -58,23 +68,24 @@ let itemUid = 0;
 const worldItems = {}; // id -> { id, itemId, xp, x, y }
 
 function spawnWorldItem(itemId, xp) {
-  const spawn = randomLandSpawn();
+  const spawn = randomLandSpawn({ nearCenter: false });
   const id = `item-${itemUid++}`;
   worldItems[id] = {
     id,
     itemId: itemId ?? null,
     xp: xp ?? 0,
-    x: clamp(spawn.x + Math.floor(Math.random() * 200 - 100), TILE_SIZE, WORLD_WIDTH - TILE_SIZE),
-    y: clamp(spawn.y + Math.floor(Math.random() * 200 - 100), TILE_SIZE, WORLD_HEIGHT - TILE_SIZE),
+    x: clamp(spawn.x, TILE_SIZE, WORLD_WIDTH - TILE_SIZE),
+    y: clamp(spawn.y, TILE_SIZE, WORLD_HEIGHT - TILE_SIZE),
   };
   return worldItems[id];
 }
 
 function seedWorldItems() {
-  ["wooden_sword", "iron_sword", "leather_armor", "health_potion", "health_potion", "health_potion"].forEach(
-    (itemId) => spawnWorldItem(itemId, 0)
-  );
-  for (let i = 0; i < 10; i++) spawnWorldItem(null, 15 + Math.floor(Math.random() * 15));
+  const gearPool = ["wooden_sword", "iron_sword", "leather_armor", "health_potion"];
+  for (let i = 0; i < 24; i++) {
+    spawnWorldItem(gearPool[Math.floor(Math.random() * gearPool.length)], 0);
+  }
+  for (let i = 0; i < 40; i++) spawnWorldItem(null, 15 + Math.floor(Math.random() * 15));
 }
 seedWorldItems();
 
@@ -82,7 +93,7 @@ seedWorldItems();
 const players = {}; // socket.id -> state
 
 function createDefaultCharacter() {
-  const spawn = randomLandSpawn();
+  const spawn = randomLandSpawn({ nearCenter: true });
   return {
     x: spawn.x,
     y: spawn.y,

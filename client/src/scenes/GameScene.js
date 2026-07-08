@@ -38,7 +38,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   preload() {
-    this.makeCircleTexture("tex-player", 14, 0xffffff);
+    this.makeCharacterTexture("tex-player", 34);
     this.makeCircleTexture("tex-bullet", 5, 0xffe066);
     this.makeCircleTexture("tex-item", 8, 0xffffff);
     this.makeTilesetTexture();
@@ -49,6 +49,38 @@ export default class GameScene extends Phaser.Scene {
     g.fillStyle(color, 1);
     g.fillCircle(radius, radius, radius);
     g.generateTexture(key, radius * 2, radius * 2);
+    g.destroy();
+  }
+
+  // 원 하나짜리 placeholder 대신 탑다운 시점에서 사람처럼 보이도록 어깨(몸통)+머리로 구성.
+  // 회전(rotation=0)일 때 머리가 오른쪽(+x)을 향하게 그려서, 캐릭터 회전이 곧 "바라보는 방향"이
+  // 눈에 보이게 만든다(원은 회전해도 겉보기 변화가 없어서 조준 방향을 알 수 없었음).
+  // 전체를 흰색으로 그려서 setTint(플레이어 색상)로 색을 입힌다.
+  makeCharacterTexture(key, size) {
+    const cx = size / 2;
+    const cy = size / 2;
+    const bodyRx = size * 0.34;
+    const bodyRy = size * 0.29;
+    const headRadius = size * 0.19;
+    const headOffset = bodyRx * 0.62;
+    const headCx = cx + headOffset;
+
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+
+    g.fillStyle(0xffffff, 1);
+    g.fillEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
+    g.fillCircle(headCx, cy, headRadius);
+
+    g.lineStyle(2, 0x000000, 0.35);
+    g.strokeEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
+    g.strokeCircle(headCx, cy, headRadius);
+
+    // 얼굴 방향을 알려주는 눈(진한 색이라 틴트해도 거의 그대로 보임)
+    g.fillStyle(0x000000, 0.6);
+    g.fillCircle(headCx + headRadius * 0.35, cy - headRadius * 0.4, 1.6);
+    g.fillCircle(headCx + headRadius * 0.35, cy + headRadius * 0.4, 1.6);
+
+    g.generateTexture(key, size, size);
     g.destroy();
   }
 
