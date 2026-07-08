@@ -139,11 +139,14 @@
     position: relative; cursor: pointer; background: #1c1c20;
   }
   .inv-icon {
-    width: 24px; height: 24px; border-radius: 3px;
+    width: 24px; height: 24px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 11px; color: #0b0b0d; font-weight: bold;
   }
   .inv-qty { position: absolute; bottom: 1px; right: 3px; font-size: 10px; color: var(--text); }
+  .inv-hotkey {
+    position: absolute; top: 1px; left: 3px;
+    font-size: 9px; color: var(--text-dim);
+  }
 
   /* ---- 모달 공통 (인벤토리/상점) ---- */
   #modal-backdrop {
@@ -255,7 +258,7 @@
       <span id="equip-armor">방어구 없음</span>
     </div>
     <div id="hotbar"></div>
-    <div id="menu-hint">인벤토리 열기: E</div>
+    <div id="menu-hint">인벤토리 열기: E · 핫바 장착/사용: 1~5</div>
   </div>
 
   <div id="modal-backdrop" class="hidden"></div>

@@ -152,7 +152,14 @@ export function renderCharacter(character, xpToNext) {
 function renderHotbar(character) {
   hotbarEl.innerHTML = "";
   character.inventory.slice(0, HOTBAR_SIZE).forEach((slot, index) => {
-    hotbarEl.appendChild(makeSlotEl(slot, index));
+    const slotEl = makeSlotEl(slot, index);
+
+    const hotkey = document.createElement("span");
+    hotkey.className = "inv-hotkey";
+    hotkey.textContent = index + 1;
+    slotEl.appendChild(hotkey);
+
+    hotbarEl.appendChild(slotEl);
   });
 }
 
@@ -181,11 +188,7 @@ function makeSlotEl(slot, index) {
   if (slot) {
     const def = ITEMS[slot.itemId];
 
-    const icon = document.createElement("div");
-    icon.className = "inv-icon";
-    icon.style.background = colorToCss(def?.color ?? 0x888888);
-    icon.textContent = def?.name?.[0] ?? "?";
-    slotEl.appendChild(icon);
+    slotEl.appendChild(makeIconEl(def));
 
     if (slot.qty > 1) {
       const qty = document.createElement("span");
@@ -208,11 +211,7 @@ function renderShopBuyGrid() {
     const box = document.createElement("div");
     box.className = "shop-item";
 
-    const icon = document.createElement("div");
-    icon.className = "inv-icon";
-    icon.style.background = colorToCss(def.color);
-    icon.textContent = def.name[0];
-    box.appendChild(icon);
+    box.appendChild(makeIconEl(def));
 
     const label = document.createElement("div");
     label.className = "shop-item-label";
@@ -236,11 +235,7 @@ function renderShopModal(character) {
     const box = document.createElement("div");
     box.className = "shop-item";
 
-    const icon = document.createElement("div");
-    icon.className = "inv-icon";
-    icon.style.background = colorToCss(def.color);
-    icon.textContent = def.name[0];
-    box.appendChild(icon);
+    box.appendChild(makeIconEl(def));
 
     const sellPrice = Math.max(1, Math.floor(def.price / 2));
     const label = document.createElement("div");
@@ -270,4 +265,48 @@ export function showToast(message) {
 
 function colorToCss(hex) {
   return `#${hex.toString(16).padStart(6, "0")}`;
+}
+
+// 예전엔 색칠된 네모 안에 아이템 이름 첫 글자만 써서 "뭐가 뭔지 모르겠다"는 지적을 받았다.
+// 대신 아이템 종류(근접무기/원거리무기/방어구/소비)별로 실루엣이 다른 작은 SVG 아이콘을 그린다.
+function makeIconEl(def) {
+  const icon = document.createElement("div");
+  icon.className = "inv-icon";
+  if (def) icon.innerHTML = iconMarkup(def);
+  return icon;
+}
+
+function iconMarkup(def) {
+  const color = colorToCss(def.color ?? 0x888888);
+
+  if (def.type === "weapon" && def.attackType === "ranged") {
+    return `<svg viewBox="0 0 24 24" width="20" height="20">
+      <path d="M7 3 Q17 12 7 21" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round"/>
+      <line x1="7" y1="3" x2="7" y2="21" stroke="${color}" stroke-width="1"/>
+    </svg>`;
+  }
+
+  if (def.type === "weapon") {
+    return `<svg viewBox="0 0 24 24" width="20" height="20">
+      <g stroke="#0b0b0d" stroke-width="0.6" stroke-linejoin="round">
+        <rect x="10.8" y="1" width="2.4" height="13" rx="1" fill="${color}" transform="rotate(45 12 9)"/>
+        <rect x="6.5" y="13" width="7" height="2.2" rx="0.6" fill="#2a2a30" transform="rotate(45 10 14.1)"/>
+        <rect x="3.5" y="16.5" width="2.2" height="5" rx="1" fill="#5a3d24" transform="rotate(45 4.6 19)"/>
+      </g>
+    </svg>`;
+  }
+
+  if (def.type === "armor") {
+    return `<svg viewBox="0 0 24 24" width="20" height="20">
+      <path d="M12 2 L19 5 V11 C19 16.5 15.5 20 12 21 C8.5 20 5 16.5 5 11 V5 Z"
+        fill="${color}" stroke="#0b0b0d" stroke-width="0.8"/>
+    </svg>`;
+  }
+
+  // consumable (물약)
+  return `<svg viewBox="0 0 24 24" width="20" height="20">
+    <rect x="10" y="2" width="4" height="4" fill="${color}" stroke="#0b0b0d" stroke-width="0.6"/>
+    <path d="M9 6 L15 6 L17.5 12.5 C18.5 16 17 21 12 21 C7 21 5.5 16 6.5 12.5 Z"
+      fill="${color}" stroke="#0b0b0d" stroke-width="0.8"/>
+  </svg>`;
 }

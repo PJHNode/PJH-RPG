@@ -15,6 +15,14 @@ import { xpToReachLevel, MAX_LEVEL } from "../leveling.js";
 import { ITEMS } from "../items.js";
 import { initUI, renderCharacter, showToast, updateShopProximity } from "../ui.js";
 import { buildMinimapTerrain, renderMinimap } from "../minimap.js";
+import {
+  unlockAudio,
+  playSwordSwingSound,
+  playArrowShotSound,
+  playHitSound,
+  playPickupSound,
+  playLevelUpSound,
+} from "../sound.js";
 
 const TILE_COLORS = {
   [TILE_TYPES.GRASS]: 0x3a6b3a,
@@ -148,18 +156,40 @@ export default class GameScene extends Phaser.Scene {
     g.destroy();
   }
 
-  // 근접 스윙 시 잠깐 나타났다 사라지는 칼자국. 예전보다 훨씬 크고 두껍게 키워서
-  // "칼이 너무 작아 보인다"는 문제를 해결 - 근접 사거리(46px)와 비슷한 길이로 맞춤.
+  // 근접 스윙 이펙트: 예전엔 그냥 얇은 삼각형 "칼자국"이라 칼처럼 안 보인다는 지적을 받아서,
+  // 손잡이+날밑(가드)+칼날로 구성된 실제 검 모양으로 다시 그렸다. 원점(0, 0.5)이 손잡이 쪽이라
+  // 플레이어 위치에 두고 조준 방향 기준으로 회전시키면 검을 쥐고 휘두르는 것처럼 보인다.
+  // 사거리(MELEE_RANGE=46px)와 비슷한 길이로 맞춰서 "칼이 너무 작아 보인다"도 함께 해결.
   makeSlashTexture() {
+    const w = 52;
+    const h = 14;
+    const midY = h / 2;
     const g = this.make.graphics({ x: 0, y: 0, add: false });
-    g.fillStyle(0xffffff, 1);
+
+    // 손잡이(자루)
+    g.fillStyle(0x5a3d24, 1);
+    g.fillRect(0, midY - 2, 9, 4);
+
+    // 날밑(가드)
+    g.fillStyle(0x2a2a30, 1);
+    g.fillRect(8, midY - 5, 3, 10);
+
+    // 칼날 - 가드에서 뻗어나가 끝이 뾰족해지는 형태
+    g.fillStyle(0xd8d8de, 1);
     g.beginPath();
-    g.moveTo(0, -9);
-    g.lineTo(46, 0);
-    g.lineTo(0, 9);
+    g.moveTo(11, midY - 3);
+    g.lineTo(w - 4, midY - 1.2);
+    g.lineTo(w, midY);
+    g.lineTo(w - 4, midY + 1.2);
+    g.lineTo(11, midY + 3);
     g.closePath();
     g.fillPath();
-    g.generateTexture("tex-slash", 48, 18);
+
+    // 칼날 중앙 하이라이트 선
+    g.fillStyle(0xffffff, 0.6);
+    g.fillRect(13, midY - 0.5, w - 20, 1);
+
+    g.generateTexture("tex-slash", w, h);
     g.destroy();
   }
 
@@ -281,6 +311,15 @@ export default class GameScene extends Phaser.Scene {
     this.moveKeys = this.input.keyboard.addKeys({ up: "W", down: "S", left: "A", right: "D" });
     this.cursorKeys = this.input.keyboard.createCursorKeys();
     this.input.on("pointerdown", (pointer) => this.handleAttack(pointer));
+
+    // 숫자키 1~5로 핫바(인벤토리 앞 5칸)를 바로 장착/사용할 수 있게 함
+    ["ONE", "TWO", "THREE", "FOUR", "FIVE"].forEach((keyName, index) => {
+      this.input.keyboard.on(`keydown-${keyName}`, () => this.handleHotbarKey(index));
+    });
+
+    // 첫 클릭/키 입력에서 오디오 컨텍스트를 깨워둔다(브라우저 자동재생 정책 - 사용자 제스처 필요)
+    this.input.once("pointerdown", () => unlockAudio());
+    this.input.keyboard.once("keydown", () => unlockAudio());
 
     this.cameras.main.setZoom(DEFAULT_ZOOM);
     this.input.on("wheel", (_pointer, _objs, _dx, deltaY) => {
@@ -406,6 +445,7 @@ export default class GameScene extends Phaser.Scene {
       onMonsterDamaged: ({ id, hp, maxHp }) => {
         this.updateMonsterHp(id, hp, maxHp);
         this.flashMonster(id);
+        playHitSound();
       },
       onMonsterDied: ({ id }) => this.removeMonster(id),
       onMonstersUpdated: (list) => {
@@ -447,8 +487,12 @@ export default class GameScene extends Phaser.Scene {
     const xpToNext = this.character.level >= MAX_LEVEL ? 1 : xpToReachLevel(this.character.level + 1);
     renderCharacter(this.character, xpToNext);
 
-    if (leveledUp) showToast(`레벨 업! Lv.${this.character.level}`);
+    if (leveledUp) {
+      showToast(`레벨 업! Lv.${this.character.level}`);
+      playLevelUpSound();
+    }
 
+    this.updateLocalHpBar();
     saveCharacter(this.character);
   }
 
@@ -464,6 +508,14 @@ export default class GameScene extends Phaser.Scene {
     sprite.setCollideWorldBounds(true);
     this.localPlayer = sprite;
 
+    // 몬스터처럼 내 캐릭터 머리 위에도 HP바를 띄운다(HUD 구석 대신 캐릭터를 볼 때도 체력이 보이게)
+    this.localHpBg = this.add.rectangle(state.x, state.y - 26, 28, 4, 0x000000, 0.5).setDepth(LABEL_DEPTH);
+    this.localHpFill = this.add
+      .rectangle(state.x - 14, state.y - 26, 28, 4, 0x55ff88)
+      .setOrigin(0, 0.5)
+      .setDepth(LABEL_DEPTH);
+    this.updateLocalHpBar();
+
     this.cameras.main.startFollow(sprite, true, 0.15, 0.15);
 
     if (this.groundLayer) {
@@ -472,6 +524,12 @@ export default class GameScene extends Phaser.Scene {
     if (this.obstacleGroup) {
       this.physics.add.collider(sprite, this.obstacleGroup);
     }
+  }
+
+  updateLocalHpBar() {
+    if (!this.localHpFill) return;
+    const ratio = this.character.maxHp > 0 ? Math.max(0, this.character.hp / this.character.maxHp) : 0;
+    this.localHpFill.width = 28 * ratio;
   }
 
   spawnRemotePlayer(id, state) {
@@ -559,11 +617,12 @@ export default class GameScene extends Phaser.Scene {
   }
 
   playMeleeSwing(x, y, angle) {
+    // 손잡이+가드+칼날 색이 이미 텍스처에 칠해져 있어서(브라운 손잡이, 은색 칼날) 여기서
+    // setTint를 하면 색이 단색으로 뭉개지므로 원래 색 그대로 둔다.
     const slash = this.add.image(x, y, "tex-slash");
     slash.setOrigin(0, 0.5);
     slash.setRotation(angle - 0.7);
-    slash.setAlpha(0.95);
-    slash.setTint(0xe4e4e7);
+    slash.setAlpha(1);
     slash.setDepth(TOP_DEPTH);
 
     this.tweens.add({
@@ -609,9 +668,22 @@ export default class GameScene extends Phaser.Scene {
 
     if (weaponDef?.attackType === "ranged") {
       this.network.sendRangedAttack(angle);
+      playArrowShotSound();
     } else {
       this.network.sendMeleeAttack(angle);
+      playSwordSwingSound();
     }
+  }
+
+  // 숫자키 1~5: 핫바(인벤토리 앞 5칸)의 아이템을 클릭한 것과 똑같이 장착/사용한다.
+  handleHotbarKey(index) {
+    if (!this.network) return;
+    const slot = this.character.inventory[index];
+    const def = slot && ITEMS[slot.itemId];
+    if (!def) return;
+
+    if (def.type === "consumable") this.network.useItem(index);
+    else this.network.equipItem(index);
   }
 
   update(time, delta) {
@@ -626,6 +698,8 @@ export default class GameScene extends Phaser.Scene {
       this.localPlayer.setDepth(this.localPlayer.y);
       this.localShadow.setPosition(this.localPlayer.x, this.localPlayer.y + 12);
       this.localShadow.setDepth(this.localPlayer.y - 0.5);
+      this.localHpBg.setPosition(this.localPlayer.x, this.localPlayer.y - 26);
+      this.localHpFill.setPosition(this.localPlayer.x - 14, this.localPlayer.y - 26);
     }
 
     this.interpolateRemotePlayers();
@@ -712,6 +786,7 @@ export default class GameScene extends Phaser.Scene {
       if (dist < TILE_SIZE) {
         this.pickupRequested.add(id);
         this.network.pickupItem(id);
+        playPickupSound();
       }
     });
   }
