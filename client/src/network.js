@@ -12,7 +12,16 @@ export default class Network {
     this.socket.on("playerMoved", (data) => handlers.onPlayerMoved?.(data));
     this.socket.on("playerLeft", (data) => handlers.onPlayerLeft?.(data));
     this.socket.on("playerLevelChanged", (data) => handlers.onPlayerLevelChanged?.(data));
-    this.socket.on("bulletCreated", (data) => handlers.onBulletCreated?.(data));
+
+    this.socket.on("meleeAttack", (data) => handlers.onMeleeAttack?.(data));
+    this.socket.on("arrowCreated", (data) => handlers.onArrowCreated?.(data));
+    this.socket.on("arrowRemoved", (data) => handlers.onArrowRemoved?.(data));
+
+    this.socket.on("monsterSpawned", (data) => handlers.onMonsterSpawned?.(data));
+    this.socket.on("monsterDamaged", (data) => handlers.onMonsterDamaged?.(data));
+    this.socket.on("monsterDied", (data) => handlers.onMonsterDied?.(data));
+    this.socket.on("monstersUpdated", (data) => handlers.onMonstersUpdated?.(data));
+
     this.socket.on("itemSpawned", (data) => handlers.onItemSpawned?.(data));
     this.socket.on("itemRemoved", (data) => handlers.onItemRemoved?.(data));
     this.socket.on("characterReady", (data) => handlers.onCharacterReady?.(data));
@@ -25,8 +34,12 @@ export default class Network {
     this.socket.emit("playerMovement", { x, y, rotation });
   }
 
-  sendShoot(x, y, angle) {
-    this.socket.emit("shoot", { x, y, angle });
+  sendMeleeAttack(angle) {
+    this.socket.emit("meleeAttack", { angle });
+  }
+
+  sendRangedAttack(angle) {
+    this.socket.emit("rangedAttack", { angle });
   }
 
   loadCharacter(character) {
@@ -51,5 +64,13 @@ export default class Network {
 
   sellItem(slotIndex) {
     this.socket.emit("sellItem", slotIndex);
+  }
+
+  adminSetGold(value) {
+    this.socket.emit("adminSetGold", value);
+  }
+
+  adminSetLevel(value) {
+    this.socket.emit("adminSetLevel", value);
   }
 }

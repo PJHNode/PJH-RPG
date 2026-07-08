@@ -1,17 +1,19 @@
 import {
   TILE_SIZE,
   PLAYER_SPEED,
-  BULLET_SPEED,
-  BULLET_LIFETIME_MS,
+  ARROW_SPEED,
+  ARROW_LIFETIME_MS,
   MOVE_SEND_INTERVAL_MS,
   LEVEL_REQUIRED_FOR_SEA,
   WATER_SPEED_MULTIPLIER,
+  SHOP_INTERACT_RADIUS,
   TILE_TYPES,
 } from "../config.js";
 import Network from "../network.js";
 import { loadCharacter, saveCharacter } from "../storage.js";
 import { xpToReachLevel, MAX_LEVEL } from "../leveling.js";
-import { initUI, renderCharacter, showToast } from "../ui.js";
+import { ITEMS } from "../items.js";
+import { initUI, renderCharacter, showToast, updateShopProximity } from "../ui.js";
 import { buildMinimapTerrain, renderMinimap } from "../minimap.js";
 
 const TILE_COLORS = {
@@ -20,6 +22,8 @@ const TILE_COLORS = {
   [TILE_TYPES.SAND]: 0xcbb26a,
   [TILE_TYPES.WATER]: 0x2a5d8f,
 };
+
+const ATTACK_COOLDOWN_MS = 300;
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -31,18 +35,23 @@ export default class GameScene extends Phaser.Scene {
     this.character = loadCharacter();
     this.localPlayer = null;
     this.remotePlayers = new Map(); // id -> { sprite, label, target }
-    this.bullets = new Map(); // bulletId -> { sprite, vx, vy, expireAt }
+    this.arrows = new Map(); // arrowId -> { sprite, vx, vy, expireAt }
     this.worldItemSprites = new Map(); // itemId -> sprite
     this.pickupRequested = new Set(); // 중복 pickupItem 전송 방지
+    this.monsters = new Map(); // id -> { sprite, hpBg, hpFill, target: {x,y}, maxHp }
     this.groundLayer = null;
     this.lastSend = { x: null, y: null, rotation: null, time: 0 };
-    this.menuOpen = false; // 인벤토리/상점 모달이 열려 있으면 이동/사격 입력을 멈춘다
+    this.lastAttackTime = 0;
+    this.menuOpen = false; // 인벤토리/상점/어드민 모달이 열려 있으면 이동/공격 입력을 멈춘다
     this.shopPosition = null;
+    this.shopNear = false;
   }
 
   preload() {
     this.makeCharacterTexture("tex-player", 34);
-    this.makeCircleTexture("tex-bullet", 5, 0xffe066);
+    this.makeMonsterTexture("tex-monster-slime", 28, 0x55cc55);
+    this.makeArrowTexture();
+    this.makeSlashTexture();
     this.makeCircleTexture("tex-item", 8, 0xffffff);
     this.makeTilesetTexture();
   }
@@ -87,6 +96,53 @@ export default class GameScene extends Phaser.Scene {
     g.destroy();
   }
 
+  // 몬스터: 뿔 두 개 달린 슬라임 실루엣. 플레이어와 한눈에 구별되도록 각진 뿔을 붙였다.
+  makeMonsterTexture(key, size, color) {
+    const cx = size / 2;
+    const cy = size / 2;
+    const bodyR = size * 0.32;
+
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+
+    g.fillStyle(color, 1);
+    g.fillTriangle(cx - bodyR * 0.9, cy - bodyR * 0.5, cx - bodyR * 0.3, cy - bodyR * 1.6, cx - bodyR * 0.1, cy - bodyR * 0.5);
+    g.fillTriangle(cx + bodyR * 0.9, cy - bodyR * 0.5, cx + bodyR * 0.3, cy - bodyR * 1.6, cx + bodyR * 0.1, cy - bodyR * 0.5);
+    g.fillCircle(cx, cy, bodyR);
+
+    g.lineStyle(2, 0x000000, 0.4);
+    g.strokeCircle(cx, cy, bodyR);
+
+    g.fillStyle(0x000000, 0.8);
+    g.fillCircle(cx - bodyR * 0.32, cy - bodyR * 0.1, 1.8);
+    g.fillCircle(cx + bodyR * 0.32, cy - bodyR * 0.1, 1.8);
+
+    g.generateTexture(key, size, size);
+    g.destroy();
+  }
+
+  makeArrowTexture() {
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(0, 3, 15, 2);
+    g.fillTriangle(13, 0, 13, 8, 20, 4);
+    g.generateTexture("tex-arrow", 20, 8);
+    g.destroy();
+  }
+
+  // 근접 스윙 시 잠깐 나타났다 사라지는 얇은 칼자국 모양
+  makeSlashTexture() {
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.fillStyle(0xffffff, 1);
+    g.beginPath();
+    g.moveTo(0, -3);
+    g.lineTo(26, 0);
+    g.lineTo(0, 3);
+    g.closePath();
+    g.fillPath();
+    g.generateTexture("tex-slash", 28, 8);
+    g.destroy();
+  }
+
   makeTilesetTexture() {
     const types = Object.values(TILE_TYPES);
     const g = this.make.graphics({ x: 0, y: 0, add: false });
@@ -105,7 +161,7 @@ export default class GameScene extends Phaser.Scene {
   create() {
     this.moveKeys = this.input.keyboard.addKeys({ up: "W", down: "S", left: "A", right: "D" });
     this.cursorKeys = this.input.keyboard.createCursorKeys();
-    this.input.on("pointerdown", (pointer) => this.handleShoot(pointer));
+    this.input.on("pointerdown", (pointer) => this.handleAttack(pointer));
 
     this.statusText = this.add
       .text(this.scale.width - 10, 10, "서버에 연결 중...", { font: "12px monospace", fill: "#8a8a92" })
@@ -121,9 +177,11 @@ export default class GameScene extends Phaser.Scene {
       },
       onBuy: (itemId) => this.network.buyItem(itemId),
       onSell: (index) => this.network.sellItem(index),
-      onMenuOpenChange: (isOpen) => {
-        this.menuOpen = isOpen;
-        if (isOpen && this.localPlayer) this.localPlayer.body.setVelocity(0, 0);
+      onAdminSetGold: (value) => this.network.adminSetGold(value),
+      onAdminSetLevel: (value) => this.network.adminSetLevel(value),
+      onMenuOpenChange: (modalName) => {
+        this.menuOpen = modalName !== null;
+        if (this.menuOpen && this.localPlayer) this.localPlayer.body.setVelocity(0, 0);
       },
     });
 
@@ -161,6 +219,7 @@ export default class GameScene extends Phaser.Scene {
         });
 
         Object.values(data.worldItems).forEach((item) => this.spawnWorldItem(item));
+        Object.values(data.monsters).forEach((m) => this.spawnMonster(m));
 
         if (data.shop) {
           this.shopPosition = data.shop;
@@ -195,7 +254,27 @@ export default class GameScene extends Phaser.Scene {
         this.remotePlayers.delete(id);
         this.refreshStatus();
       },
-      onBulletCreated: (bullet) => this.spawnBullet(bullet),
+      onMeleeAttack: ({ x, y, angle }) => this.playMeleeSwing(x, y, angle),
+      onArrowCreated: (arrow) => this.spawnArrow(arrow),
+      onArrowRemoved: ({ id }) => {
+        const arrow = this.arrows.get(id);
+        if (arrow) {
+          arrow.sprite.destroy();
+          this.arrows.delete(id);
+        }
+      },
+      onMonsterSpawned: (m) => this.spawnMonster(m),
+      onMonsterDamaged: ({ id, hp, maxHp }) => this.updateMonsterHp(id, hp, maxHp),
+      onMonsterDied: ({ id }) => this.removeMonster(id),
+      onMonstersUpdated: (list) => {
+        list.forEach(({ id, x, y, hp, maxHp }) => {
+          const entry = this.monsters.get(id);
+          if (!entry) return;
+          entry.target.x = x;
+          entry.target.y = y;
+          if (hp !== entry.lastHp) this.updateMonsterHp(id, hp, maxHp);
+        });
+      },
       onItemSpawned: (item) => this.spawnWorldItem(item),
       onItemRemoved: ({ id }) => {
         this.pickupRequested.delete(id);
@@ -212,6 +291,7 @@ export default class GameScene extends Phaser.Scene {
       onShopFailed: ({ reason }) => {
         if (reason === "not_enough_gold") showToast("골드가 부족합니다");
         else if (reason === "inventory_full") showToast("인벤토리가 가득 찼습니다");
+        else if (reason === "too_far") showToast("상점에 가까이 가야 합니다");
       },
     });
   }
@@ -261,13 +341,72 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  spawnBullet(bullet) {
-    const sprite = this.add.image(bullet.x, bullet.y, "tex-bullet");
-    this.bullets.set(bullet.id, {
+  spawnMonster(state) {
+    const sprite = this.add.image(state.x, state.y, "tex-monster-slime");
+    const hpBg = this.add.rectangle(state.x, state.y - 20, 24, 4, 0x000000, 0.5);
+    const hpFill = this.add.rectangle(state.x - 12, state.y - 20, 24, 4, 0xff5577).setOrigin(0, 0.5);
+
+    this.monsters.set(state.id, {
       sprite,
-      vx: Math.cos(bullet.angle) * BULLET_SPEED,
-      vy: Math.sin(bullet.angle) * BULLET_SPEED,
-      expireAt: this.time.now + BULLET_LIFETIME_MS,
+      hpBg,
+      hpFill,
+      maxHp: state.maxHp,
+      lastHp: state.hp,
+      target: { x: state.x, y: state.y },
+    });
+  }
+
+  updateMonsterHp(id, hp, maxHp) {
+    const entry = this.monsters.get(id);
+    if (!entry) return;
+    entry.lastHp = hp;
+    entry.hpFill.width = Math.max(0, (hp / maxHp) * 24);
+  }
+
+  removeMonster(id) {
+    const entry = this.monsters.get(id);
+    if (!entry) return;
+
+    this.tweens.add({
+      targets: entry.sprite,
+      alpha: 0,
+      scale: 0.4,
+      duration: 200,
+      onComplete: () => {
+        entry.sprite.destroy();
+        entry.hpBg.destroy();
+        entry.hpFill.destroy();
+      },
+    });
+    this.monsters.delete(id);
+  }
+
+  spawnArrow(arrow) {
+    const sprite = this.add.image(arrow.x, arrow.y, "tex-arrow");
+    sprite.setTint(0xe8d9a0);
+    sprite.setRotation(arrow.angle);
+
+    this.arrows.set(arrow.id, {
+      sprite,
+      vx: Math.cos(arrow.angle) * ARROW_SPEED,
+      vy: Math.sin(arrow.angle) * ARROW_SPEED,
+      expireAt: this.time.now + ARROW_LIFETIME_MS,
+    });
+  }
+
+  playMeleeSwing(x, y, angle) {
+    const slash = this.add.image(x, y, "tex-slash");
+    slash.setOrigin(0, 0.5);
+    slash.setRotation(angle - 0.6);
+    slash.setAlpha(0.9);
+    slash.setTint(0xe4e4e7);
+
+    this.tweens.add({
+      targets: slash,
+      rotation: angle + 0.6,
+      alpha: 0,
+      duration: 160,
+      onComplete: () => slash.destroy(),
     });
   }
 
@@ -279,8 +418,7 @@ export default class GameScene extends Phaser.Scene {
     this.worldItemSprites.set(item.id, sprite);
   }
 
-  // 상점은 근접 상호작용 없이 HUD의 "상점 열기" 버튼으로 언제든 열리지만,
-  // 오픈월드 느낌을 위해 마을 위치에 눈에 보이는 랜드마크는 심어둔다.
+  // 상점은 이 위치 반경(SHOP_INTERACT_RADIUS) 안에 있을 때만 이용 가능하다(서버가 최종 검증).
   spawnShopMarker(pos) {
     this.add.rectangle(pos.x, pos.y, TILE_SIZE * 1.4, TILE_SIZE * 1.4, 0xffd700, 0.85).setStrokeStyle(2, 0x0b0b0d);
     this.add
@@ -289,11 +427,22 @@ export default class GameScene extends Phaser.Scene {
       .setPadding(3, 1, 3, 1);
   }
 
-  handleShoot(pointer) {
-    if (!this.localPlayer || !this.network) return;
+  handleAttack(pointer) {
+    if (!this.localPlayer || !this.network || this.menuOpen) return;
+    if (this.time.now - this.lastAttackTime < ATTACK_COOLDOWN_MS) return;
+    this.lastAttackTime = this.time.now;
+
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const angle = Phaser.Math.Angle.Between(this.localPlayer.x, this.localPlayer.y, worldPoint.x, worldPoint.y);
-    this.network.sendShoot(this.localPlayer.x, this.localPlayer.y, angle);
+
+    const weaponId = this.character.equipped.weapon;
+    const weaponDef = weaponId ? ITEMS[weaponId] : null;
+
+    if (weaponDef?.attackType === "ranged") {
+      this.network.sendRangedAttack(angle);
+    } else {
+      this.network.sendMeleeAttack(angle);
+    }
   }
 
   update(time, delta) {
@@ -305,8 +454,20 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.interpolateRemotePlayers();
-    this.updateBullets(time, delta);
+    this.interpolateMonsters();
+    this.updateArrows(time, delta);
     this.updateMinimap();
+    this.updateShopProximityCheck();
+  }
+
+  updateShopProximityCheck() {
+    if (!this.localPlayer || !this.shopPosition) return;
+    const dist = Phaser.Math.Distance.Between(this.localPlayer.x, this.localPlayer.y, this.shopPosition.x, this.shopPosition.y);
+    const near = dist <= SHOP_INTERACT_RADIUS;
+    if (near !== this.shopNear) {
+      this.shopNear = near;
+      updateShopProximity(near);
+    }
   }
 
   updateMinimap() {
@@ -389,15 +550,26 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  updateBullets(time, delta) {
-    const dt = delta / 1000;
-    this.bullets.forEach((bullet, id) => {
-      bullet.sprite.x += bullet.vx * dt;
-      bullet.sprite.y += bullet.vy * dt;
+  interpolateMonsters() {
+    this.monsters.forEach(({ sprite, hpBg, hpFill, target }) => {
+      sprite.x = Phaser.Math.Linear(sprite.x, target.x, 0.1);
+      sprite.y = Phaser.Math.Linear(sprite.y, target.y, 0.1);
+      hpBg.x = sprite.x;
+      hpBg.y = sprite.y - 20;
+      hpFill.x = sprite.x - 12;
+      hpFill.y = sprite.y - 20;
+    });
+  }
 
-      if (time > bullet.expireAt) {
-        bullet.sprite.destroy();
-        this.bullets.delete(id);
+  updateArrows(time, delta) {
+    const dt = delta / 1000;
+    this.arrows.forEach((arrow, id) => {
+      arrow.sprite.x += arrow.vx * dt;
+      arrow.sprite.y += arrow.vy * dt;
+
+      if (time > arrow.expireAt) {
+        arrow.sprite.destroy();
+        this.arrows.delete(id);
       }
     });
   }

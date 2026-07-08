@@ -1,12 +1,15 @@
 // client/src/items.js와 아이템 카탈로그를 동일하게 유지할 것.
 // 서버는 이 파일로 효과(heal, stats)와 상점 가격(price)을 실제 적용하고,
 // 클라이언트는 이름/아이콘/가격 표시에 쓴다. 판매가는 price의 절반(최소 1G).
+//
+// attackType: 무기(weapon)에만 있음. "melee"는 클릭 시 근접 스윙, "ranged"는 화살 발사.
 
 const ITEMS = {
   wooden_sword: {
     id: "wooden_sword",
     name: "나무 검",
     type: "weapon",
+    attackType: "melee",
     stackable: false,
     stats: { damage: 3 },
     color: 0xc9975b,
@@ -16,10 +19,21 @@ const ITEMS = {
     id: "iron_sword",
     name: "철검",
     type: "weapon",
+    attackType: "melee",
     stackable: false,
     stats: { damage: 6 },
     color: 0xb5b8bd,
     price: 40,
+  },
+  short_bow: {
+    id: "short_bow",
+    name: "짧은 활",
+    type: "weapon",
+    attackType: "ranged",
+    stackable: false,
+    stats: { damage: 4 },
+    color: 0x9c7a4a,
+    price: 30,
   },
   leather_armor: {
     id: "leather_armor",

@@ -6,14 +6,20 @@
 module.exports = {
   TILE_SIZE: 32,
   PLAYER_SPEED: 200, // px/sec
-  BULLET_SPEED: 500, // px/sec
-  BULLET_LIFETIME_MS: 1500,
   MOVE_SEND_INTERVAL_MS: 50,
+
+  // 원거리 무기(활)로 쏜 화살. 서버가 매 tick 위치를 계산해 몬스터 명중을 판정하고,
+  // 클라이언트는 같은 속도로 로컬 시각 시뮬레이션만 한다(위치를 매 tick 받지 않음).
+  ARROW_SPEED: 600, // px/sec
+  ARROW_LIFETIME_MS: 1200,
 
   // 시작의 섬 규칙: 레벨 10 미만은 바다(WATER) 타일에 충돌 처리되어 진입 불가.
   // 레벨 10 이상은 진입은 가능하지만 이동 속도가 느려진다(배 없이 헤엄치는 느낌).
   LEVEL_REQUIRED_FOR_SEA: 10,
   WATER_SPEED_MULTIPLIER: 0.5,
+
+  // 상점은 이 반경(px) 안에 있을 때만 구매/판매 가능 (서버가 authoritative하게 검증)
+  SHOP_INTERACT_RADIUS: 96,
 
   TILE_TYPES: { GRASS: 0, DIRT: 1, SAND: 2, WATER: 3 },
 };

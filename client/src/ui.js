@@ -19,24 +19,47 @@ const inventoryModal = document.getElementById("inventory-modal");
 const inventoryGridEl = document.getElementById("inventory-grid");
 const inventoryEquipRowEl = document.getElementById("inventory-equip-row");
 
-// ---- 상점 모달 ----
+// ---- 상점 ----
+const shopButton = document.getElementById("shop-button");
+const shopHintEl = document.getElementById("shop-hint");
 const shopModal = document.getElementById("shop-modal");
 const shopGoldAmountEl = document.getElementById("shop-gold-amount");
 const shopBuyGridEl = document.getElementById("shop-buy-grid");
 const shopSellGridEl = document.getElementById("shop-sell-grid");
 
+// ---- 어드민(베타 디버그) 패널 ----
+const adminModal = document.getElementById("admin-modal");
+const adminGoldInput = document.getElementById("admin-gold-input");
+const adminLevelInput = document.getElementById("admin-level-input");
+
 // ---- 공통 ----
 const backdrop = document.getElementById("modal-backdrop");
 const toastEl = document.getElementById("toast");
 
-let activeModal = null; // 'inventory' | 'shop' | null
+let activeModal = null; // 'inventory' | 'shop' | 'admin' | null
 let currentCharacter = null;
+let shopNear = false;
 let uiHandlers = {};
 
 export function initUI(handlers) {
   uiHandlers = handlers;
 
-  document.getElementById("shop-button").addEventListener("click", () => toggleShop());
+  shopButton.addEventListener("click", () => {
+    if (!shopNear) {
+      showToast("상점에 가까이 가야 이용할 수 있어요");
+      return;
+    }
+    toggleShop();
+  });
+
+  document.getElementById("admin-button").addEventListener("click", () => toggleAdmin());
+  document.getElementById("admin-apply-gold").addEventListener("click", () => {
+    uiHandlers.onAdminSetGold?.(Number(adminGoldInput.value));
+  });
+  document.getElementById("admin-apply-level").addEventListener("click", () => {
+    uiHandlers.onAdminSetLevel?.(Number(adminLevelInput.value));
+  });
+
   document.querySelectorAll(".modal-close").forEach((btn) => {
     btn.addEventListener("click", () => closeModals());
   });
@@ -52,18 +75,24 @@ export function initUI(handlers) {
   });
 
   renderShopBuyGrid();
+  updateShopProximity(false);
 }
 
 function setActiveModal(name) {
   activeModal = name;
   inventoryModal.classList.toggle("hidden", name !== "inventory");
   shopModal.classList.toggle("hidden", name !== "shop");
+  adminModal.classList.toggle("hidden", name !== "admin");
   backdrop.classList.toggle("hidden", name === null);
-  uiHandlers.onMenuOpenChange?.(name !== null);
+  uiHandlers.onMenuOpenChange?.(name);
 
   if (name && currentCharacter) {
     if (name === "inventory") renderInventoryModal(currentCharacter);
     if (name === "shop") renderShopModal(currentCharacter);
+    if (name === "admin") {
+      adminGoldInput.value = currentCharacter.gold;
+      adminLevelInput.value = currentCharacter.level;
+    }
   }
 }
 
@@ -75,8 +104,31 @@ export function toggleShop() {
   setActiveModal(activeModal === "shop" ? null : "shop");
 }
 
+export function toggleAdmin() {
+  setActiveModal(activeModal === "admin" ? null : "admin");
+}
+
 export function closeModals() {
   setActiveModal(null);
+}
+
+export function getActiveModal() {
+  return activeModal;
+}
+
+// 상점 반경 안/밖으로 넘어갈 때 GameScene이 호출. 버튼 활성화 + 힌트 문구 + 밖으로
+// 나가면 상점 모달을 자동으로 닫는다(서버도 어차피 거리 검증을 하지만 UX상 자연스럽게).
+export function updateShopProximity(isNear) {
+  if (isNear === shopNear) return;
+  shopNear = isNear;
+
+  shopButton.classList.toggle("disabled", !isNear);
+  shopHintEl.classList.toggle("hidden", isNear);
+
+  if (!isNear && activeModal === "shop") {
+    closeModals();
+    showToast("상점에서 멀어졌습니다");
+  }
 }
 
 // character가 바뀔 때마다(이동 제외 전부) GameScene이 호출하는 단일 진입점

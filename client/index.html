@@ -73,6 +73,34 @@
     padding: 6px 10px;
     font-size: 12px;
   }
+  #shop-button.disabled { opacity: 0.4; cursor: not-allowed; }
+  #shop-hint { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  #shop-hint.hidden { display: none; }
+
+  /* ---- 어드민(베타 디버그) 버튼 (우하단) ---- */
+  #admin-button {
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
+    padding: 8px 12px;
+    font-size: 12px;
+    z-index: 10;
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  #admin-field { display: flex; align-items: center; gap: 8px; }
+  #admin-field label { font-size: 12px; width: 70px; }
+  #admin-field input {
+    width: 90px;
+    background: #1c1c20;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 5px 6px;
+    font-family: inherit;
+  }
+  #admin-field button { padding: 5px 10px; font-size: 12px; }
+  #admin-note { font-size: 11px; color: var(--text-dim); }
 
   /* ---- 미니맵 (우상단) ---- */
   #minimap-panel {
@@ -212,7 +240,10 @@
     <div id="hp-text">20 / 20</div>
     <div class="bar-track"><div id="xp-fill" class="bar-fill"></div></div>
     <button id="shop-button">상점 열기</button>
+    <div id="shop-hint">상점에 가까이 가야 이용할 수 있어요</div>
   </div>
+
+  <button id="admin-button">⚙ 관리자 (베타)</button>
 
   <div id="minimap-panel">
     <canvas id="minimap" width="150" height="150"></canvas>
@@ -247,6 +278,24 @@
     <div id="shop-buy-grid" class="slot-grid"></div>
     <div class="modal-subheader">내 아이템 판매 (클릭 시 1개 판매)</div>
     <div id="shop-sell-grid" class="slot-grid"></div>
+  </div>
+
+  <div id="admin-modal" class="modal-box hidden">
+    <div class="modal-header">
+      <span>관리자 (베타 테스트용)</span>
+      <button class="modal-close" data-close="admin">닫기</button>
+    </div>
+    <div id="admin-note">인증 없이 누구나 열 수 있는 디버그 패널입니다. 정식 출시 전 제거 예정.</div>
+    <div id="admin-field">
+      <label for="admin-gold-input">골드</label>
+      <input id="admin-gold-input" type="number" min="0" max="999999" />
+      <button id="admin-apply-gold">설정</button>
+    </div>
+    <div id="admin-field">
+      <label for="admin-level-input">레벨</label>
+      <input id="admin-level-input" type="number" min="1" max="10" />
+      <button id="admin-apply-level">설정</button>
+    </div>
   </div>
 
   <div id="toast"></div>
