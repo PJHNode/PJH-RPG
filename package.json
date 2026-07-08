@@ -1,0 +1,18 @@
+{
+  "name": "pjh-rpg",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Realm of the Mad God 스타일의 웹 브라우저 2D 도트 MMORPG",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}

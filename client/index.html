@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PJH-RPG</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #0b0b0d;
+    overflow: hidden;
+    font-family: "Segoe UI", "Malgun Gothic", sans-serif;
+  }
+  #game-root {
+    width: 100vw;
+    height: 100vh;
+  }
+  #game-root canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+  <div id="game-root"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
