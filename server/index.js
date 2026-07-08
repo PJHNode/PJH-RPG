@@ -8,7 +8,7 @@ const {
   ARROW_SPEED,
   ARROW_LIFETIME_MS,
   SHOP_INTERACT_RADIUS,
-  TILE_TYPES,
+  OBSTACLE_RADIUS,
 } = require("../shared/constants");
 const { generateIslandMap, isLandTile } = require("../shared/islandMap");
 const { ITEMS, INVENTORY_SIZE } = require("../shared/items");
@@ -63,6 +63,24 @@ function randomLandSpawn({ nearCenter = false } = {}) {
   return { x: cx * TILE_SIZE, y: cy * TILE_SIZE };
 }
 
+// 중심에서 [minRadius, maxRadius] 타일 거리 사이의 육지를 무작위로 고른다 (지역별 몬스터 스폰용)
+function randomLandSpawnInRing(minRadius, maxRadius) {
+  const cx = MAP_COLS / 2;
+  const cy = MAP_ROWS / 2;
+
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = minRadius + Math.random() * (maxRadius - minRadius);
+    const gx = Math.floor(cx + Math.cos(angle) * dist);
+    const gy = Math.floor(cy + Math.sin(angle) * dist);
+    const tile = mapData[gy]?.[gx];
+    if (tile !== undefined && isLandTile(tile)) {
+      return { x: gx * TILE_SIZE + TILE_SIZE / 2, y: gy * TILE_SIZE + TILE_SIZE / 2 };
+    }
+  }
+  return randomLandSpawn({ nearCenter: false });
+}
+
 // 상점(마을 중앙 부근 고정 위치) - 클라이언트가 랜드마크/미니맵에 표시하고,
 // 구매·판매는 이 위치에서 SHOP_INTERACT_RADIUS 안에 있을 때만 허용된다.
 const SHOP_POSITION = randomLandSpawn({ nearCenter: true });
@@ -103,11 +121,39 @@ function seedWorldItems() {
 }
 seedWorldItems();
 
+// ---- 자연물 오브젝트 (나무/바위/수풀) ----
+// 정적 장애물: 이동을 막고(엄폐), 화살도 막는다. 한 번 생성되면 사라지지 않으므로
+// 월드 아이템과 달리 실시간 이벤트 없이 init 페이로드에만 담아 보낸다.
+const OBSTACLE_TYPES = ["tree", "rock", "bush"];
+const OBSTACLE_COUNT = 160;
+const OBSTACLE_MIN_DIST_FROM_SHOP = TILE_SIZE * 4;
+
+let obstacleUid = 0;
+const obstacles = {}; // id -> { id, type, x, y }
+
+function seedObstacles() {
+  for (let i = 0; i < OBSTACLE_COUNT; i++) {
+    const spawn = randomLandSpawn({ nearCenter: false });
+    if (Math.hypot(spawn.x - SHOP_POSITION.x, spawn.y - SHOP_POSITION.y) < OBSTACLE_MIN_DIST_FROM_SHOP) continue;
+
+    const type = OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)];
+    const id = `obs-${obstacleUid++}`;
+    obstacles[id] = { id, type, x: spawn.x, y: spawn.y };
+  }
+}
+seedObstacles();
+
+function blockedByObstacle(x, y) {
+  return Object.values(obstacles).some((o) => Math.hypot(o.x - x, o.y - y) <= OBSTACLE_RADIUS);
+}
+
 // ---- 몬스터 ----
+// 섬 중심에서의 거리로 스폰 지역을 나눠, 마을에서 멀어질수록 강한 몬스터가 나오게 한다.
 const MONSTER_TYPES = {
-  slime: { name: "슬라임", maxHp: 15, xp: 10, gold: 3, speed: 40 },
+  slime: { name: "슬라임", maxHp: 15, xp: 10, gold: 3, speed: 40, minRadius: 0, maxRadius: 25, count: 12 },
+  wolf: { name: "늑대", maxHp: 30, xp: 25, gold: 8, speed: 70, minRadius: 25, maxRadius: 45, count: 10 },
+  crab: { name: "게", maxHp: 45, xp: 40, gold: 15, speed: 30, minRadius: 45, maxRadius: ISLAND_RADIUS, count: 8 },
 };
-const MONSTER_COUNT = 24;
 const MONSTER_WANDER_RADIUS = 150;
 const MONSTER_RESPAWN_MS = 10000;
 
@@ -115,8 +161,8 @@ let monsterUid = 0;
 const monsters = {}; // id -> { id, type, x, y, hp, maxHp, spawnX, spawnY, targetX, targetY, nextWanderAt }
 
 function spawnMonster(type) {
-  const spawn = randomLandSpawn({ nearCenter: false });
   const def = MONSTER_TYPES[type];
+  const spawn = randomLandSpawnInRing(def.minRadius, def.maxRadius);
   const id = `mob-${monsterUid++}`;
   monsters[id] = {
     id,
@@ -135,7 +181,9 @@ function spawnMonster(type) {
 }
 
 function seedMonsters() {
-  for (let i = 0; i < MONSTER_COUNT; i++) spawnMonster("slime");
+  Object.entries(MONSTER_TYPES).forEach(([type, def]) => {
+    for (let i = 0; i < def.count; i++) spawnMonster(type);
+  });
 }
 seedMonsters();
 
@@ -231,6 +279,12 @@ function tickArrows() {
 
     a.x += a.vx * dt;
     a.y += a.vy * dt;
+
+    if (blockedByObstacle(a.x, a.y)) {
+      delete arrows[a.id];
+      io.emit("arrowRemoved", { id: a.id });
+      return;
+    }
 
     for (const m of Object.values(monsters)) {
       if (Math.hypot(m.x - a.x, m.y - a.y) > ARROW_HIT_RADIUS) continue;
@@ -341,6 +395,7 @@ io.on("connection", (socket) => {
     players,
     worldItems,
     monsters,
+    obstacles,
     shop: SHOP_POSITION,
     maxLevel: MAX_LEVEL,
   });

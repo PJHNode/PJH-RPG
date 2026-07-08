@@ -21,5 +21,10 @@ module.exports = {
   // 상점은 이 반경(px) 안에 있을 때만 구매/판매 가능 (서버가 authoritative하게 검증)
   SHOP_INTERACT_RADIUS: 96,
 
-  TILE_TYPES: { GRASS: 0, DIRT: 1, SAND: 2, WATER: 3 },
+  // GRASS_EDGE/DIRT_EDGE는 실제 지형이 아니라 풀-흙 경계를 부드럽게 보이게 하는
+  // 디더(반점) 텍스처용 시각 전용 타일. 충돌/이동 판정은 GRASS·DIRT와 동일하게 취급한다.
+  TILE_TYPES: { GRASS: 0, DIRT: 1, SAND: 2, WATER: 3, GRASS_EDGE: 4, DIRT_EDGE: 5 },
+
+  // 나무/바위/수풀 같은 정적 장애물. 플레이어 이동을 막고(엄폐), 화살도 막는다.
+  OBSTACLE_RADIUS: 14,
 };
