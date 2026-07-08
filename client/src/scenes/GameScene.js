@@ -1,5 +1,24 @@
-import { WORLD, PLAYER_SPEED, BULLET_SPEED, BULLET_LIFETIME_MS, MOVE_SEND_INTERVAL_MS } from "../config.js";
+import {
+  TILE_SIZE,
+  PLAYER_SPEED,
+  BULLET_SPEED,
+  BULLET_LIFETIME_MS,
+  MOVE_SEND_INTERVAL_MS,
+  LEVEL_REQUIRED_FOR_SEA,
+  WATER_SPEED_MULTIPLIER,
+  TILE_TYPES,
+} from "../config.js";
 import Network from "../network.js";
+import { loadCharacter, saveCharacter } from "../storage.js";
+import { xpToReachLevel, MAX_LEVEL } from "../leveling.js";
+import { renderHud, renderInventory, showToast } from "../ui.js";
+
+const TILE_COLORS = {
+  [TILE_TYPES.GRASS]: 0x3a6b3a,
+  [TILE_TYPES.DIRT]: 0x6b4f31,
+  [TILE_TYPES.SAND]: 0xcbb26a,
+  [TILE_TYPES.WATER]: 0x2a5d8f,
+};
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -8,15 +27,21 @@ export default class GameScene extends Phaser.Scene {
 
   init() {
     this.network = null;
+    this.character = loadCharacter();
     this.localPlayer = null;
-    this.remotePlayers = new Map(); // id -> { sprite, label, target: {x,y,rotation} }
+    this.remotePlayers = new Map(); // id -> { sprite, label, target }
     this.bullets = new Map(); // bulletId -> { sprite, vx, vy, expireAt }
+    this.worldItemSprites = new Map(); // itemId -> sprite
+    this.pickupRequested = new Set(); // 중복 pickupItem 전송 방지
+    this.groundLayer = null;
     this.lastSend = { x: null, y: null, rotation: null, time: 0 };
   }
 
   preload() {
     this.makeCircleTexture("tex-player", 14, 0xffffff);
     this.makeCircleTexture("tex-bullet", 5, 0xffe066);
+    this.makeCircleTexture("tex-item", 8, 0xffffff);
+    this.makeTilesetTexture();
   }
 
   makeCircleTexture(key, radius, color) {
@@ -27,48 +52,71 @@ export default class GameScene extends Phaser.Scene {
     g.destroy();
   }
 
-  create() {
-    this.physics.world.setBounds(0, 0, WORLD.width, WORLD.height);
-    this.drawGrid();
+  makeTilesetTexture() {
+    const types = Object.values(TILE_TYPES);
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
 
-    this.moveKeys = this.input.keyboard.addKeys({
-      up: "W",
-      down: "S",
-      left: "A",
-      right: "D",
+    types.forEach((type) => {
+      g.fillStyle(TILE_COLORS[type], 1);
+      g.fillRect(type * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
+      g.lineStyle(1, 0x000000, 0.15);
+      g.strokeRect(type * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
     });
-    this.cursorKeys = this.input.keyboard.createCursorKeys();
 
+    g.generateTexture("tileset-tex", types.length * TILE_SIZE, TILE_SIZE);
+    g.destroy();
+  }
+
+  create() {
+    this.moveKeys = this.input.keyboard.addKeys({ up: "W", down: "S", left: "A", right: "D" });
+    this.cursorKeys = this.input.keyboard.createCursorKeys();
     this.input.on("pointerdown", (pointer) => this.handleShoot(pointer));
 
     this.statusText = this.add
-      .text(10, 10, "서버에 연결 중...", { font: "14px monospace", fill: "#8a8a92" })
+      .text(this.scale.width - 10, 10, "서버에 연결 중...", { font: "12px monospace", fill: "#8a8a92" })
+      .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(1000);
 
     this.connect();
   }
 
-  drawGrid() {
-    const g = this.add.graphics();
-    g.lineStyle(1, 0x1c1c22, 1);
-    const step = 64;
-    for (let x = 0; x <= WORLD.width; x += step) g.lineBetween(x, 0, x, WORLD.height);
-    for (let y = 0; y <= WORLD.height; y += step) g.lineBetween(0, y, WORLD.width, y);
-    g.lineStyle(2, 0x3a3a42, 1);
-    g.strokeRect(0, 0, WORLD.width, WORLD.height);
+  buildTilemap(mapPayload) {
+    const { width, height, tileSize, mapData } = mapPayload;
+
+    this.tilemap = this.make.tilemap({ data: mapData, tileWidth: tileSize, tileHeight: tileSize });
+    const tileset = this.tilemap.addTilesetImage("tileset-tex", "tileset-tex", tileSize, tileSize, 0, 0);
+    this.groundLayer = this.tilemap.createLayer(0, tileset, 0, 0);
+    this.applyWaterCollision();
+
+    this.physics.world.setBounds(0, 0, width, height);
+    this.cameras.main.setBounds(0, 0, width, height);
+  }
+
+  applyWaterCollision() {
+    if (!this.groundLayer) return;
+    const blocked = this.character.level < LEVEL_REQUIRED_FOR_SEA;
+    this.groundLayer.setCollision(TILE_TYPES.WATER, blocked);
   }
 
   connect() {
     this.network = new Network({
       onInit: (data) => {
+        this.buildTilemap(data.world);
         this.spawnLocalPlayer(data.players[data.id]);
+
         Object.entries(data.players).forEach(([id, state]) => {
           if (id === data.id) return;
           this.spawnRemotePlayer(id, state);
         });
+
+        Object.values(data.worldItems).forEach((item) => this.spawnWorldItem(item));
+
+        this.network.loadCharacter(this.character);
         this.refreshStatus();
       },
+      onCharacterReady: (state) => this.applyCharacterState(state, false),
+      onCharacterUpdated: (state) => this.applyCharacterState(state, state.leveledUp),
       onPlayerJoined: ({ id, ...state }) => {
         this.spawnRemotePlayer(id, state);
         this.refreshStatus();
@@ -80,6 +128,10 @@ export default class GameScene extends Phaser.Scene {
         entry.target.y = y;
         entry.target.rotation = rotation;
       },
+      onPlayerLevelChanged: ({ id, level }) => {
+        const entry = this.remotePlayers.get(id);
+        if (entry) entry.label.setText(`Lv.${level}`);
+      },
       onPlayerLeft: ({ id }) => {
         const entry = this.remotePlayers.get(id);
         if (!entry) return;
@@ -89,7 +141,41 @@ export default class GameScene extends Phaser.Scene {
         this.refreshStatus();
       },
       onBulletCreated: (bullet) => this.spawnBullet(bullet),
+      onItemSpawned: (item) => this.spawnWorldItem(item),
+      onItemRemoved: ({ id }) => {
+        this.pickupRequested.delete(id);
+        const sprite = this.worldItemSprites.get(id);
+        if (sprite) {
+          sprite.destroy();
+          this.worldItemSprites.delete(id);
+        }
+      },
+      onPickupFailed: ({ reason }) => {
+        this.pickupRequested.clear();
+        if (reason === "inventory_full") showToast("인벤토리가 가득 찼습니다");
+      },
     });
+  }
+
+  applyCharacterState(state, leveledUp) {
+    Object.assign(this.character, state);
+    delete this.character.leveledUp;
+
+    this.applyWaterCollision();
+
+    const xpToNext = this.character.level >= MAX_LEVEL ? 1 : xpToReachLevel(this.character.level + 1);
+    renderHud(this.character, xpToNext);
+    renderInventory(this.character, {
+      onSlotClick: (index, def) => {
+        if (!def) return;
+        if (def.type === "consumable") this.network.useItem(index);
+        else this.network.equipItem(index);
+      },
+    });
+
+    if (leveledUp) showToast(`레벨 업! Lv.${this.character.level}`);
+
+    saveCharacter(this.character);
   }
 
   refreshStatus() {
@@ -102,15 +188,18 @@ export default class GameScene extends Phaser.Scene {
     sprite.setCollideWorldBounds(true);
     this.localPlayer = sprite;
 
-    this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height);
     this.cameras.main.startFollow(sprite, true, 0.15, 0.15);
+
+    if (this.groundLayer) {
+      this.physics.add.collider(sprite, this.groundLayer);
+    }
   }
 
   spawnRemotePlayer(id, state) {
     const sprite = this.add.image(state.x, state.y, "tex-player");
     sprite.setTint(state.color ?? 0xaaaaaa);
     const label = this.add
-      .text(state.x, state.y - 24, id.slice(0, 4), { font: "10px monospace", fill: "#8a8a92" })
+      .text(state.x, state.y - 24, `Lv.${state.level ?? 1}`, { font: "10px monospace", fill: "#8a8a92" })
       .setOrigin(0.5);
 
     this.remotePlayers.set(id, {
@@ -130,6 +219,12 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  spawnWorldItem(item) {
+    const sprite = this.add.image(item.x, item.y, "tex-item");
+    sprite.setTint(item.itemId ? 0xffe066 : 0x66ccff);
+    this.worldItemSprites.set(item.id, sprite);
+  }
+
   handleShoot(pointer) {
     if (!this.localPlayer || !this.network) return;
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
@@ -142,10 +237,17 @@ export default class GameScene extends Phaser.Scene {
       this.handleMovement();
       this.faceMouse();
       this.sendMovementIfChanged(time);
+      this.checkItemPickups();
     }
 
     this.interpolateRemotePlayers();
     this.updateBullets(time, delta);
+  }
+
+  currentTileType() {
+    if (!this.groundLayer || !this.localPlayer) return null;
+    const tile = this.groundLayer.getTileAtWorldXY(this.localPlayer.x, this.localPlayer.y, true);
+    return tile ? tile.index : null;
   }
 
   handleMovement() {
@@ -160,8 +262,10 @@ export default class GameScene extends Phaser.Scene {
 
     if (vx !== 0 || vy !== 0) {
       const len = Math.hypot(vx, vy);
-      vx = (vx / len) * PLAYER_SPEED;
-      vy = (vy / len) * PLAYER_SPEED;
+      let speed = PLAYER_SPEED;
+      if (this.currentTileType() === TILE_TYPES.WATER) speed *= WATER_SPEED_MULTIPLIER;
+      vx = (vx / len) * speed;
+      vy = (vy / len) * speed;
     }
 
     body.setVelocity(vx, vy);
@@ -186,6 +290,17 @@ export default class GameScene extends Phaser.Scene {
 
     this.network.sendMovement(x, y, rotation);
     this.lastSend = { x, y, rotation, time };
+  }
+
+  checkItemPickups() {
+    this.worldItemSprites.forEach((sprite, id) => {
+      if (this.pickupRequested.has(id)) return;
+      const dist = Phaser.Math.Distance.Between(this.localPlayer.x, this.localPlayer.y, sprite.x, sprite.y);
+      if (dist < TILE_SIZE) {
+        this.pickupRequested.add(id);
+        this.network.pickupItem(id);
+      }
+    });
   }
 
   interpolateRemotePlayers() {

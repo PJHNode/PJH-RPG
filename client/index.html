@@ -5,25 +5,175 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PJH-RPG</title>
 <style>
+  :root {
+    --bg: #0b0b0d;
+    --panel: rgba(22, 22, 26, 0.92);
+    --border: #2a2a30;
+    --text: #e4e4e7;
+    --text-dim: #8a8a92;
+    --hp: #ff5577;
+    --xp: #55c1ff;
+  }
+
   html, body {
     margin: 0;
     padding: 0;
     height: 100%;
-    background: #0b0b0d;
+    background: var(--bg);
     overflow: hidden;
     font-family: "Segoe UI", "Malgun Gothic", sans-serif;
+    color: var(--text);
   }
-  #game-root {
-    width: 100vw;
-    height: 100vh;
+
+  #game-root { width: 100vw; height: 100vh; }
+  #game-root canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    width: 220px;
+    z-index: 10;
   }
-  #game-root canvas {
-    display: block;
+
+  #hud-top-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    letter-spacing: 0.5px;
   }
+
+  .bar-track {
+    height: 8px;
+    background: #232328;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    width: 0%;
+    transition: width 0.2s ease;
+  }
+
+  #hp-fill { background: var(--hp); }
+  #xp-fill { background: var(--xp); }
+
+  #hp-text {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: right;
+  }
+
+  #inventory-panel {
+    position: fixed;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    z-index: 10;
+  }
+
+  #equip-row {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  #inventory-bar {
+    display: flex;
+    gap: 4px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+  }
+
+  .inv-slot {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    cursor: pointer;
+    background: #1c1c20;
+  }
+
+  .inv-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: #0b0b0d;
+    font-weight: bold;
+  }
+
+  .inv-qty {
+    position: absolute;
+    bottom: 1px;
+    right: 3px;
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  #toast {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 20;
+  }
+
+  #toast.visible { opacity: 1; }
 </style>
 </head>
 <body>
   <div id="game-root"></div>
+
+  <div id="hud">
+    <div id="hud-top-row">
+      <span id="level-text">Lv.1</span>
+      <span id="gold-text">0</span>
+    </div>
+    <div class="bar-track"><div id="hp-fill" class="bar-fill"></div></div>
+    <div id="hp-text">20 / 20</div>
+    <div class="bar-track"><div id="xp-fill" class="bar-fill"></div></div>
+  </div>
+
+  <div id="inventory-panel">
+    <div id="equip-row">
+      <span id="equip-weapon">무기 없음</span>
+      <span id="equip-armor">방어구 없음</span>
+    </div>
+    <div id="inventory-bar"></div>
+  </div>
+
+  <div id="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
