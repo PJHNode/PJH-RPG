@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PJH-RPG</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game-container">
+    <header id="hud">
+      <div class="hud-stat"><span class="hud-label">LV</span><span id="hud-level">1</span></div>
+      <div class="hud-stat"><span class="hud-label">HP</span><span id="hud-hp">20 / 20</span></div>
+      <div class="hud-stat"><span class="hud-label">GOLD</span><span id="hud-gold">0</span></div>
+    </header>
+
+    <canvas id="game-canvas" width="640" height="480"></canvas>
+
+    <div id="message-box" class="hidden">
+      <p id="message-text"></p>
+      <button id="message-close">닫기</button>
+    </div>
+
+    <p id="hint">이동: 방향키 / WASD · 상호작용: 벽/오브젝트에 부딪히기</p>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
