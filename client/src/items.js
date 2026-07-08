@@ -8,6 +8,7 @@ export const ITEMS = {
     stackable: false,
     stats: { damage: 3 },
     color: 0xc9975b,
+    price: 10,
   },
   iron_sword: {
     id: "iron_sword",
@@ -16,6 +17,7 @@ export const ITEMS = {
     stackable: false,
     stats: { damage: 6 },
     color: 0xb5b8bd,
+    price: 40,
   },
   leather_armor: {
     id: "leather_armor",
@@ -24,6 +26,7 @@ export const ITEMS = {
     stackable: false,
     stats: { defense: 2 },
     color: 0x8a5a3b,
+    price: 25,
   },
   health_potion: {
     id: "health_potion",
@@ -33,6 +36,7 @@ export const ITEMS = {
     maxStack: 20,
     effect: { heal: 20 },
     color: 0xff5577,
+    price: 8,
   },
 };
 

@@ -63,17 +63,21 @@ function randomLandSpawn({ nearCenter = false } = {}) {
   return { x: cx * TILE_SIZE, y: cy * TILE_SIZE };
 }
 
+// 상점(마을 중앙 부근 고정 위치) - 클라이언트는 여기에 랜드마크를 그리고 미니맵에 표시
+const SHOP_POSITION = randomLandSpawn({ nearCenter: true });
+
 // ---- 월드 아이템(픽업) ----
 let itemUid = 0;
-const worldItems = {}; // id -> { id, itemId, xp, x, y }
+const worldItems = {}; // id -> { id, itemId, xp, gold, x, y }
 
-function spawnWorldItem(itemId, xp) {
+function spawnWorldItem(itemId, xp, gold = 0) {
   const spawn = randomLandSpawn({ nearCenter: false });
   const id = `item-${itemUid++}`;
   worldItems[id] = {
     id,
     itemId: itemId ?? null,
     xp: xp ?? 0,
+    gold: gold ?? 0,
     x: clamp(spawn.x, TILE_SIZE, WORLD_WIDTH - TILE_SIZE),
     y: clamp(spawn.y, TILE_SIZE, WORLD_HEIGHT - TILE_SIZE),
   };
@@ -83,9 +87,10 @@ function spawnWorldItem(itemId, xp) {
 function seedWorldItems() {
   const gearPool = ["wooden_sword", "iron_sword", "leather_armor", "health_potion"];
   for (let i = 0; i < 24; i++) {
-    spawnWorldItem(gearPool[Math.floor(Math.random() * gearPool.length)], 0);
+    spawnWorldItem(gearPool[Math.floor(Math.random() * gearPool.length)], 0, 0);
   }
-  for (let i = 0; i < 40; i++) spawnWorldItem(null, 15 + Math.floor(Math.random() * 15));
+  for (let i = 0; i < 40; i++) spawnWorldItem(null, 15 + Math.floor(Math.random() * 15), 0);
+  for (let i = 0; i < 30; i++) spawnWorldItem(null, 0, 5 + Math.floor(Math.random() * 15));
 }
 seedWorldItems();
 
@@ -182,6 +187,7 @@ io.on("connection", (socket) => {
     world: { width: WORLD_WIDTH, height: WORLD_HEIGHT, tileSize: TILE_SIZE, mapData },
     players,
     worldItems,
+    shop: SHOP_POSITION,
     maxLevel: MAX_LEVEL,
   });
 
@@ -264,13 +270,53 @@ io.on("connection", (socket) => {
       if (leveledUp) io.emit("playerLevelChanged", { id: socket.id, level: player.level });
     }
 
+    if (worldItem.gold > 0) {
+      player.gold += worldItem.gold;
+    }
+
     sendCharacterUpdate(socket, player, leveledUp);
 
     // 주운 자리를 계속 비워두지 않도록 잠시 후 같은 종류로 리스폰
     setTimeout(() => {
-      const respawned = spawnWorldItem(worldItem.itemId, worldItem.xp);
+      const respawned = spawnWorldItem(worldItem.itemId, worldItem.xp, worldItem.gold);
       io.emit("itemSpawned", respawned);
     }, 8000);
+  });
+
+  socket.on("buyItem", (itemId) => {
+    const player = players[socket.id];
+    const def = ITEMS[itemId];
+    if (!player || !def || typeof def.price !== "number") return;
+
+    if (player.gold < def.price) {
+      socket.emit("shopFailed", { reason: "not_enough_gold" });
+      return;
+    }
+
+    const added = addToInventory(player.inventory, itemId, 1);
+    if (!added) {
+      socket.emit("shopFailed", { reason: "inventory_full" });
+      return;
+    }
+
+    player.gold -= def.price;
+    sendCharacterUpdate(socket, player);
+  });
+
+  socket.on("sellItem", (slotIndex) => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    const slot = player.inventory[slotIndex];
+    const def = slot && ITEMS[slot.itemId];
+    if (!def || typeof def.price !== "number") return;
+
+    const sellPrice = Math.max(1, Math.floor(def.price / 2));
+    slot.qty -= 1;
+    if (slot.qty <= 0) player.inventory[slotIndex] = null;
+    player.gold += sellPrice;
+
+    sendCharacterUpdate(socket, player);
   });
 
   socket.on("equipItem", (slotIndex) => {

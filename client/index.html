@@ -13,6 +13,7 @@
     --text-dim: #8a8a92;
     --hp: #ff5577;
     --xp: #55c1ff;
+    --accent: #ffd700;
   }
 
   html, body {
@@ -28,6 +29,17 @@
   #game-root { width: 100vw; height: 100vh; }
   #game-root canvas { display: block; }
 
+  button {
+    font-family: inherit;
+    background: #1c1c20;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--text-dim); }
+
+  /* ---- HUD (좌상단) ---- */
   #hud {
     position: fixed;
     top: 12px;
@@ -50,29 +62,33 @@
     letter-spacing: 0.5px;
   }
 
-  .bar-track {
-    height: 8px;
-    background: #232328;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .bar-fill {
-    height: 100%;
-    width: 0%;
-    transition: width 0.2s ease;
-  }
-
+  .bar-track { height: 8px; background: #232328; border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; width: 0%; transition: width 0.2s ease; }
   #hp-fill { background: var(--hp); }
   #xp-fill { background: var(--xp); }
+  #hp-text { font-size: 11px; color: var(--text-dim); text-align: right; }
 
-  #hp-text {
-    font-size: 11px;
-    color: var(--text-dim);
-    text-align: right;
+  #shop-button {
+    margin-top: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
   }
 
-  #inventory-panel {
+  /* ---- 미니맵 (우상단) ---- */
+  #minimap-panel {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+    z-index: 10;
+  }
+  #minimap { display: block; border-radius: 3px; }
+
+  /* ---- 하단 핫바 ---- */
+  #hotbar-panel {
     position: fixed;
     bottom: 12px;
     left: 50%;
@@ -83,56 +99,89 @@
     gap: 6px;
     z-index: 10;
   }
+  #equip-row { display: flex; gap: 12px; font-size: 11px; color: var(--text-dim); }
+  #hotbar { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+  #menu-hint { font-size: 11px; color: var(--text-dim); }
 
-  #equip-row {
-    display: flex;
-    gap: 12px;
-    font-size: 11px;
-    color: var(--text-dim);
+  /* ---- 슬롯 공통 ---- */
+  .inv-slot {
+    width: 36px; height: 36px;
+    border: 1px solid var(--border); border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; cursor: pointer; background: #1c1c20;
   }
+  .inv-icon {
+    width: 24px; height: 24px; border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #0b0b0d; font-weight: bold;
+  }
+  .inv-qty { position: absolute; bottom: 1px; right: 3px; font-size: 10px; color: var(--text); }
 
-  #inventory-bar {
-    display: flex;
-    gap: 4px;
+  /* ---- 모달 공통 (인벤토리/상점) ---- */
+  #modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 30;
+  }
+  #modal-backdrop.hidden { display: none; }
+
+  .modal-box {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 420px;
+    max-width: 90vw;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px;
+    border-radius: 8px;
+    padding: 16px;
+    z-index: 31;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
+  .modal-box.hidden { display: none; }
 
-  .inv-slot {
-    width: 36px;
-    height: 36px;
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 15px;
+    font-weight: bold;
+  }
+  .modal-close { padding: 4px 10px; font-size: 12px; }
+  .modal-subheader { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+  .slot-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  #inventory-equip-row { display: flex; gap: 10px; }
+  .equip-box {
+    flex: 1;
     border: 1px solid var(--border);
     border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    cursor: pointer;
+    padding: 8px;
+    font-size: 12px;
+    text-align: center;
     background: #1c1c20;
   }
 
-  .inv-icon {
-    width: 24px;
-    height: 24px;
-    border-radius: 3px;
+  .shop-item {
     display: flex;
     align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    color: #0b0b0d;
-    font-weight: bold;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    width: 100%;
   }
+  .shop-item:hover { border-color: var(--accent); }
+  .shop-item-label { flex: 1; }
+  .shop-empty { font-size: 12px; color: var(--text-dim); }
+  #shop-gold-line { font-size: 13px; }
 
-  .inv-qty {
-    position: absolute;
-    bottom: 1px;
-    right: 3px;
-    font-size: 10px;
-    color: var(--text);
-  }
-
+  /* ---- 토스트 ---- */
   #toast {
     position: fixed;
     top: 70px;
@@ -146,9 +195,8 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;
-    z-index: 20;
+    z-index: 40;
   }
-
   #toast.visible { opacity: 1; }
 </style>
 </head>
@@ -163,14 +211,42 @@
     <div class="bar-track"><div id="hp-fill" class="bar-fill"></div></div>
     <div id="hp-text">20 / 20</div>
     <div class="bar-track"><div id="xp-fill" class="bar-fill"></div></div>
+    <button id="shop-button">상점 열기</button>
   </div>
 
-  <div id="inventory-panel">
+  <div id="minimap-panel">
+    <canvas id="minimap" width="150" height="150"></canvas>
+  </div>
+
+  <div id="hotbar-panel">
     <div id="equip-row">
       <span id="equip-weapon">무기 없음</span>
       <span id="equip-armor">방어구 없음</span>
     </div>
-    <div id="inventory-bar"></div>
+    <div id="hotbar"></div>
+    <div id="menu-hint">인벤토리 열기: E</div>
+  </div>
+
+  <div id="modal-backdrop" class="hidden"></div>
+
+  <div id="inventory-modal" class="modal-box hidden">
+    <div class="modal-header">
+      <span>인벤토리</span>
+      <button class="modal-close" data-close="inventory">닫기 (E)</button>
+    </div>
+    <div id="inventory-equip-row"></div>
+    <div id="inventory-grid" class="slot-grid"></div>
+  </div>
+
+  <div id="shop-modal" class="modal-box hidden">
+    <div class="modal-header">
+      <span>상점</span>
+      <button class="modal-close" data-close="shop">닫기</button>
+    </div>
+    <div id="shop-gold-line">보유 골드: <span id="shop-gold-amount">0</span></div>
+    <div id="shop-buy-grid" class="slot-grid"></div>
+    <div class="modal-subheader">내 아이템 판매 (클릭 시 1개 판매)</div>
+    <div id="shop-sell-grid" class="slot-grid"></div>
   </div>
 
   <div id="toast"></div>

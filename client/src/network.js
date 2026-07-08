@@ -18,6 +18,7 @@ export default class Network {
     this.socket.on("characterReady", (data) => handlers.onCharacterReady?.(data));
     this.socket.on("characterUpdated", (data) => handlers.onCharacterUpdated?.(data));
     this.socket.on("pickupFailed", (data) => handlers.onPickupFailed?.(data));
+    this.socket.on("shopFailed", (data) => handlers.onShopFailed?.(data));
   }
 
   sendMovement(x, y, rotation) {
@@ -42,5 +43,13 @@ export default class Network {
 
   useItem(slotIndex) {
     this.socket.emit("useItem", slotIndex);
+  }
+
+  buyItem(itemId) {
+    this.socket.emit("buyItem", itemId);
+  }
+
+  sellItem(slotIndex) {
+    this.socket.emit("sellItem", slotIndex);
   }
 }

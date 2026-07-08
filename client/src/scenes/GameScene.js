@@ -11,7 +11,8 @@ import {
 import Network from "../network.js";
 import { loadCharacter, saveCharacter } from "../storage.js";
 import { xpToReachLevel, MAX_LEVEL } from "../leveling.js";
-import { renderHud, renderInventory, showToast } from "../ui.js";
+import { initUI, renderCharacter, showToast } from "../ui.js";
+import { buildMinimapTerrain, renderMinimap } from "../minimap.js";
 
 const TILE_COLORS = {
   [TILE_TYPES.GRASS]: 0x3a6b3a,
@@ -35,6 +36,8 @@ export default class GameScene extends Phaser.Scene {
     this.pickupRequested = new Set(); // 중복 pickupItem 전송 방지
     this.groundLayer = null;
     this.lastSend = { x: null, y: null, rotation: null, time: 0 };
+    this.menuOpen = false; // 인벤토리/상점 모달이 열려 있으면 이동/사격 입력을 멈춘다
+    this.shopPosition = null;
   }
 
   preload() {
@@ -110,6 +113,20 @@ export default class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000);
 
+    initUI({
+      onSlotClick: (index, def) => {
+        if (!def) return;
+        if (def.type === "consumable") this.network.useItem(index);
+        else this.network.equipItem(index);
+      },
+      onBuy: (itemId) => this.network.buyItem(itemId),
+      onSell: (index) => this.network.sellItem(index),
+      onMenuOpenChange: (isOpen) => {
+        this.menuOpen = isOpen;
+        if (isOpen && this.localPlayer) this.localPlayer.body.setVelocity(0, 0);
+      },
+    });
+
     this.connect();
   }
 
@@ -135,6 +152,7 @@ export default class GameScene extends Phaser.Scene {
     this.network = new Network({
       onInit: (data) => {
         this.buildTilemap(data.world);
+        buildMinimapTerrain(data.world);
         this.spawnLocalPlayer(data.players[data.id]);
 
         Object.entries(data.players).forEach(([id, state]) => {
@@ -143,6 +161,11 @@ export default class GameScene extends Phaser.Scene {
         });
 
         Object.values(data.worldItems).forEach((item) => this.spawnWorldItem(item));
+
+        if (data.shop) {
+          this.shopPosition = data.shop;
+          this.spawnShopMarker(data.shop);
+        }
 
         this.network.loadCharacter(this.character);
         this.refreshStatus();
@@ -186,6 +209,10 @@ export default class GameScene extends Phaser.Scene {
         this.pickupRequested.clear();
         if (reason === "inventory_full") showToast("인벤토리가 가득 찼습니다");
       },
+      onShopFailed: ({ reason }) => {
+        if (reason === "not_enough_gold") showToast("골드가 부족합니다");
+        else if (reason === "inventory_full") showToast("인벤토리가 가득 찼습니다");
+      },
     });
   }
 
@@ -196,14 +223,7 @@ export default class GameScene extends Phaser.Scene {
     this.applyWaterCollision();
 
     const xpToNext = this.character.level >= MAX_LEVEL ? 1 : xpToReachLevel(this.character.level + 1);
-    renderHud(this.character, xpToNext);
-    renderInventory(this.character, {
-      onSlotClick: (index, def) => {
-        if (!def) return;
-        if (def.type === "consumable") this.network.useItem(index);
-        else this.network.equipItem(index);
-      },
-    });
+    renderCharacter(this.character, xpToNext);
 
     if (leveledUp) showToast(`레벨 업! Lv.${this.character.level}`);
 
@@ -253,8 +273,20 @@ export default class GameScene extends Phaser.Scene {
 
   spawnWorldItem(item) {
     const sprite = this.add.image(item.x, item.y, "tex-item");
-    sprite.setTint(item.itemId ? 0xffe066 : 0x66ccff);
+    if (item.itemId) sprite.setTint(0xff66aa); // 장비/물약
+    else if (item.gold > 0) sprite.setTint(0xffd700); // 골드
+    else sprite.setTint(0x66ccff); // XP 조각
     this.worldItemSprites.set(item.id, sprite);
+  }
+
+  // 상점은 근접 상호작용 없이 HUD의 "상점 열기" 버튼으로 언제든 열리지만,
+  // 오픈월드 느낌을 위해 마을 위치에 눈에 보이는 랜드마크는 심어둔다.
+  spawnShopMarker(pos) {
+    this.add.rectangle(pos.x, pos.y, TILE_SIZE * 1.4, TILE_SIZE * 1.4, 0xffd700, 0.85).setStrokeStyle(2, 0x0b0b0d);
+    this.add
+      .text(pos.x, pos.y - TILE_SIZE, "상점", { font: "12px monospace", fill: "#0b0b0d", backgroundColor: "#ffd700" })
+      .setOrigin(0.5)
+      .setPadding(3, 1, 3, 1);
   }
 
   handleShoot(pointer) {
@@ -265,7 +297,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
-    if (this.localPlayer) {
+    if (this.localPlayer && !this.menuOpen) {
       this.handleMovement();
       this.faceMouse();
       this.sendMovementIfChanged(time);
@@ -274,6 +306,18 @@ export default class GameScene extends Phaser.Scene {
 
     this.interpolateRemotePlayers();
     this.updateBullets(time, delta);
+    this.updateMinimap();
+  }
+
+  updateMinimap() {
+    if (!this.localPlayer) return;
+    const remotePositions = [];
+    this.remotePlayers.forEach(({ sprite }) => remotePositions.push({ x: sprite.x, y: sprite.y }));
+    renderMinimap({
+      localPos: { x: this.localPlayer.x, y: this.localPlayer.y },
+      shopPos: this.shopPosition,
+      remotePositions,
+    });
   }
 
   currentTileType() {
