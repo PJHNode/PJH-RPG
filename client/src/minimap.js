@@ -39,7 +39,7 @@ export function buildMinimapTerrain(mapPayload) {
   }
 }
 
-export function renderMinimap({ localPos, shopPos, remotePositions }) {
+export function renderMinimap({ localPos, shopPos, questNpcPos, remotePositions }) {
   if (!terrainCanvas) return;
 
   ctx.clearRect(0, 0, SIZE, SIZE);
@@ -50,6 +50,11 @@ export function renderMinimap({ localPos, shopPos, remotePositions }) {
   if (shopPos) {
     const [sx, sy] = toMini(shopPos.x, shopPos.y);
     drawDot(sx, sy, 3, "#ffd700");
+  }
+
+  if (questNpcPos) {
+    const [qx, qy] = toMini(questNpcPos.x, questNpcPos.y);
+    drawDot(qx, qy, 3, "#8a6fd6");
   }
 
   remotePositions.forEach(({ x, y }) => {

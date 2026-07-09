@@ -21,6 +21,7 @@ export default class Network {
     this.socket.on("monsterDamaged", (data) => handlers.onMonsterDamaged?.(data));
     this.socket.on("monsterDied", (data) => handlers.onMonsterDied?.(data));
     this.socket.on("monstersUpdated", (data) => handlers.onMonstersUpdated?.(data));
+    this.socket.on("monsterAttack", (data) => handlers.onMonsterAttack?.(data));
 
     this.socket.on("itemSpawned", (data) => handlers.onItemSpawned?.(data));
     this.socket.on("itemRemoved", (data) => handlers.onItemRemoved?.(data));
@@ -28,6 +29,7 @@ export default class Network {
     this.socket.on("characterUpdated", (data) => handlers.onCharacterUpdated?.(data));
     this.socket.on("pickupFailed", (data) => handlers.onPickupFailed?.(data));
     this.socket.on("shopFailed", (data) => handlers.onShopFailed?.(data));
+    this.socket.on("questFailed", (data) => handlers.onQuestFailed?.(data));
 
     this.socket.on("playerHit", (data) => handlers.onPlayerHit?.(data));
     this.socket.on("playerDied", (data) => handlers.onPlayerDied?.(data));
@@ -69,6 +71,10 @@ export default class Network {
 
   sellItem(slotIndex) {
     this.socket.emit("sellItem", slotIndex);
+  }
+
+  requestQuest() {
+    this.socket.emit("requestQuest");
   }
 
   adminSetGold(value) {

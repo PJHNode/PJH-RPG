@@ -75,6 +75,16 @@
   }
   #quest-label { font-size: 12px; margin-bottom: 4px; }
   #quest-fill { background: #c98bff; }
+  #quest-request-button {
+    margin-top: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+    width: 100%;
+  }
+  #quest-request-button.hidden { display: none; }
+  #quest-request-button.disabled { opacity: 0.4; cursor: not-allowed; }
+  #quest-hint { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  #quest-hint.hidden { display: none; }
 
   #shop-button {
     margin-top: 4px;
@@ -253,8 +263,10 @@
     <button id="shop-button">상점 열기</button>
     <div id="shop-hint">상점에 가까이 가야 이용할 수 있어요</div>
     <div id="quest-info">
-      <div id="quest-label">퀘스트: -</div>
+      <div id="quest-label">퀘스트: 없음</div>
       <div class="bar-track"><div id="quest-fill" class="bar-fill"></div></div>
+      <button id="quest-request-button">퀘스트 받기</button>
+      <div id="quest-hint">퀘스트 담당자에게 가까이 가야 받을 수 있어요</div>
     </div>
   </div>
 

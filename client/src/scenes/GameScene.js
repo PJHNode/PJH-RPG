@@ -13,7 +13,7 @@ import Network from "../network.js";
 import { loadCharacter, saveCharacter } from "../storage.js";
 import { xpToReachLevel, MAX_LEVEL } from "../leveling.js";
 import { ITEMS } from "../items.js";
-import { initUI, renderCharacter, showToast, updateShopProximity } from "../ui.js";
+import { initUI, renderCharacter, showToast, updateShopProximity, updateQuestNpcProximity } from "../ui.js";
 import { buildMinimapTerrain, renderMinimap } from "../minimap.js";
 import {
   unlockAudio,
@@ -69,6 +69,8 @@ export default class GameScene extends Phaser.Scene {
     this.menuOpen = false; // 인벤토리/상점/어드민 모달이 열려 있으면 이동/공격 입력을 멈춘다
     this.shopPosition = null;
     this.shopNear = false;
+    this.questNpcPosition = null;
+    this.questNpcNear = false;
   }
 
   preload() {
@@ -82,6 +84,8 @@ export default class GameScene extends Phaser.Scene {
     this.makeCircleTexture("tex-item", 8, 0xffffff);
     this.makeObstacleTextures();
     this.makeShopTexture();
+    this.makeQuestNpcTexture();
+    this.makeQuestMarkTexture();
     this.makeTilesetTexture();
   }
 
@@ -267,6 +271,36 @@ export default class GameScene extends Phaser.Scene {
     g.destroy();
   }
 
+  // 퀘스트 담당자 NPC: 로브를 입은 사람 실루엣 + 머리 위에 뜨는 "!" 표식(고전 MMORPG 관례)
+  makeQuestNpcTexture() {
+    const w = 30;
+    const h = 40;
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+
+    g.fillStyle(0x5a4a8a, 1);
+    g.fillTriangle(w * 0.5, h * 0.35, w * 0.15, h, w * 0.85, h);
+    g.fillStyle(0xe8b98a, 1);
+    g.fillCircle(w * 0.5, h * 0.25, w * 0.22);
+    g.fillStyle(0x453870, 1);
+    g.fillTriangle(w * 0.5, h * 0.02, w * 0.32, h * 0.22, w * 0.68, h * 0.22);
+    g.lineStyle(1, 0x0b0b0d, 0.4);
+    g.strokeTriangle(w * 0.5, h * 0.35, w * 0.15, h, w * 0.85, h);
+
+    g.generateTexture("tex-quest-npc", w, h);
+    g.destroy();
+  }
+
+  makeQuestMarkTexture() {
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.fillStyle(0xffe066, 1);
+    g.fillCircle(8, 8, 8);
+    g.fillStyle(0x0b0b0d, 1);
+    g.fillRect(7, 3, 2, 7);
+    g.fillRect(7, 12, 2, 2);
+    g.generateTexture("tex-quest-mark", 16, 16);
+    g.destroy();
+  }
+
   // 타일셋: 기본 4종은 단색, GRASS_EDGE/DIRT_EDGE는 반점(디더) 패턴으로 그려서
   // 풀-흙 경계가 각진 사각형이 아니라 부드럽게 이어지는 것처럼 보이게 한다.
   makeTilesetTexture() {
@@ -344,6 +378,7 @@ export default class GameScene extends Phaser.Scene {
       onSell: (index) => this.network.sellItem(index),
       onAdminSetGold: (value) => this.network.adminSetGold(value),
       onAdminSetLevel: (value) => this.network.adminSetLevel(value),
+      onRequestQuest: () => this.network.requestQuest(),
       onMenuOpenChange: (modalName) => {
         this.menuOpen = modalName !== null;
         if (this.menuOpen && this.localPlayer) this.localPlayer.body.setVelocity(0, 0);
@@ -404,6 +439,10 @@ export default class GameScene extends Phaser.Scene {
           this.shopPosition = data.shop;
           this.spawnShopMarker(data.shop);
         }
+        if (data.questNpc) {
+          this.questNpcPosition = data.questNpc;
+          this.spawnQuestNpcMarker(data.questNpc);
+        }
 
         this.network.loadCharacter(this.character);
         this.refreshStatus();
@@ -453,6 +492,7 @@ export default class GameScene extends Phaser.Scene {
         if (entry) this.spawnDamageText(entry.sprite.x, entry.sprite.y, Math.max(0, previousHp - hp), "#ffe066");
       },
       onMonsterDied: ({ id }) => this.removeMonster(id),
+      onMonsterAttack: ({ id }) => this.lungeMonster(id),
       onMonstersUpdated: (list) => {
         list.forEach(({ id, x, y, hp, maxHp }) => {
           const entry = this.monsters.get(id);
@@ -495,8 +535,11 @@ export default class GameScene extends Phaser.Scene {
       onRespawn: ({ x, y, hp, maxHp, gold }) => this.handleRespawn(x, y, hp, maxHp, gold),
       onQuestCompleted: ({ monsterType, goldReward, xpReward }) => {
         const name = MONSTER_NAMES[monsterType] ?? monsterType;
-        showToast(`퀘스트 완료! ${name} 처치 - 골드 +${goldReward}, XP +${xpReward}`);
+        showToast(`퀘스트 완료! ${name} 처치 - 골드 +${goldReward}, XP +${xpReward}. 새 퀘스트는 담당자에게!`);
         playLevelUpSound();
+      },
+      onQuestFailed: ({ reason }) => {
+        if (reason === "too_far") showToast("퀘스트 담당자에게 가까이 가야 합니다");
       },
     });
   }
@@ -598,6 +641,28 @@ export default class GameScene extends Phaser.Scene {
     if (!entry) return;
     entry.lastHp = hp;
     entry.hpFill.width = Math.max(0, (hp / maxHp) * 24);
+  }
+
+  // 몬스터의 접촉 공격이 그냥 조용히 체력만 깎는 게 아니라 실제로 "공격했다"는 게 보이도록,
+  // 맞는 쪽(플레이어)의 빨간 피격 플래시와는 별개로 때리는 쪽(몬스터)도 주황색으로 잠깐
+  // 부풀었다 가라앉는 연출을 준다.
+  lungeMonster(id) {
+    const entry = this.monsters.get(id);
+    if (!entry) return;
+
+    entry.sprite.setTint(0xffaa33);
+    this.tweens.add({
+      targets: entry.sprite,
+      scale: 1.35,
+      duration: 90,
+      yoyo: true,
+      onComplete: () => {
+        if (entry.sprite.active) {
+          entry.sprite.setScale(1);
+          entry.sprite.clearTint();
+        }
+      },
+    });
   }
 
   flashMonster(id) {
@@ -716,16 +781,23 @@ export default class GameScene extends Phaser.Scene {
     // setTint를 하면 색이 단색으로 뭉개지므로 원래 색 그대로 둔다.
     const slash = this.add.image(x, y, "tex-slash");
     slash.setOrigin(0, 0.5);
-    slash.setRotation(angle - 0.7);
+    slash.rotation = angle - 0.7;
     slash.setAlpha(1);
     slash.setDepth(TOP_DEPTH);
 
+    // rotation을 Phaser 트윈의 대상 속성으로 직접 넘기면 안 된다: 조준각이 ±π 근처(왼쪽 방향)일 때
+    // Phaser가 절대값 기준으로 "최단 경로"를 잘못 골라서 반대쪽(오른쪽)으로 한 바퀴 거의 다 도는
+    // 버그가 있었다. 대신 alpha/scale만 트윈하고, 회전은 tween.progress로 직접 선형 계산해서
+    // Phaser의 각도 보간 로직을 아예 거치지 않게 한다.
+    const startRotation = angle - 0.7;
     this.tweens.add({
       targets: slash,
-      rotation: angle + 0.7,
       alpha: 0,
       scale: 1.15,
       duration: 180,
+      onUpdate: (tween) => {
+        slash.rotation = startRotation + tween.progress * 1.4;
+      },
       onComplete: () => slash.destroy(),
     });
   }
@@ -748,6 +820,23 @@ export default class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setPadding(3, 1, 3, 1)
       .setDepth(LABEL_DEPTH);
+  }
+
+  spawnQuestNpcMarker(pos) {
+    const npc = this.add.image(pos.x, pos.y, "tex-quest-npc").setOrigin(0.5, 0.95);
+    npc.setDepth(pos.y);
+    const shadow = this.add.image(pos.x, pos.y, "tex-shadow");
+    shadow.setDepth(pos.y - 0.5);
+
+    const mark = this.add.image(pos.x, pos.y - 46, "tex-quest-mark").setDepth(LABEL_DEPTH);
+    this.tweens.add({
+      targets: mark,
+      y: pos.y - 52,
+      duration: 700,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.InOut",
+    });
   }
 
   handleAttack(pointer) {
@@ -802,6 +891,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateArrows(time, delta);
     this.updateMinimap();
     this.updateShopProximityCheck();
+    this.updateQuestNpcProximityCheck();
   }
 
   updateShopProximityCheck() {
@@ -814,6 +904,21 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  updateQuestNpcProximityCheck() {
+    if (!this.localPlayer || !this.questNpcPosition) return;
+    const dist = Phaser.Math.Distance.Between(
+      this.localPlayer.x,
+      this.localPlayer.y,
+      this.questNpcPosition.x,
+      this.questNpcPosition.y
+    );
+    const near = dist <= SHOP_INTERACT_RADIUS; // 상점과 같은 반경 재사용
+    if (near !== this.questNpcNear) {
+      this.questNpcNear = near;
+      updateQuestNpcProximity(near);
+    }
+  }
+
   updateMinimap() {
     if (!this.localPlayer) return;
     const remotePositions = [];
@@ -821,6 +926,7 @@ export default class GameScene extends Phaser.Scene {
     renderMinimap({
       localPos: { x: this.localPlayer.x, y: this.localPlayer.y },
       shopPos: this.shopPosition,
+      questNpcPos: this.questNpcPosition,
       remotePositions,
     });
   }

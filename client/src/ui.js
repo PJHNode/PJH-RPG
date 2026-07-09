@@ -13,6 +13,8 @@ const levelText = document.getElementById("level-text");
 const goldText = document.getElementById("gold-text");
 const questLabelEl = document.getElementById("quest-label");
 const questFillEl = document.getElementById("quest-fill");
+const questRequestButton = document.getElementById("quest-request-button");
+const questHintEl = document.getElementById("quest-hint");
 
 // ---- 핫바 / 장착 ----
 const hotbarEl = document.getElementById("hotbar");
@@ -44,6 +46,7 @@ const toastEl = document.getElementById("toast");
 let activeModal = null; // 'inventory' | 'shop' | 'admin' | null
 let currentCharacter = null;
 let shopNear = false;
+let questNpcNear = false;
 let uiHandlers = {};
 
 export function initUI(handlers) {
@@ -55,6 +58,14 @@ export function initUI(handlers) {
       return;
     }
     toggleShop();
+  });
+
+  questRequestButton.addEventListener("click", () => {
+    if (!questNpcNear) {
+      showToast("퀘스트 담당자에게 가까이 가야 받을 수 있어요");
+      return;
+    }
+    uiHandlers.onRequestQuest?.();
   });
 
   document.getElementById("admin-button").addEventListener("click", () => toggleAdmin());
@@ -81,6 +92,7 @@ export function initUI(handlers) {
 
   renderShopBuyGrid();
   updateShopProximity(false);
+  updateQuestNpcProximity(false);
 }
 
 function setActiveModal(name) {
@@ -136,6 +148,15 @@ export function updateShopProximity(isNear) {
   }
 }
 
+// 퀘스트 NPC 반경 안/밖으로 넘어갈 때 GameScene이 호출.
+export function updateQuestNpcProximity(isNear) {
+  if (isNear === questNpcNear) return;
+  questNpcNear = isNear;
+
+  questRequestButton.classList.toggle("disabled", !isNear);
+  questHintEl.classList.toggle("hidden", isNear);
+}
+
 // character가 바뀔 때마다(이동 제외 전부) GameScene이 호출하는 단일 진입점
 export function renderCharacter(character, xpToNext) {
   currentCharacter = character;
@@ -156,8 +177,11 @@ export function renderCharacter(character, xpToNext) {
 }
 
 function renderQuest(quest) {
+  questRequestButton.classList.toggle("hidden", !!quest);
+  questHintEl.classList.toggle("hidden", !!quest || questNpcNear);
+
   if (!quest) {
-    questLabelEl.textContent = "퀘스트: -";
+    questLabelEl.textContent = "퀘스트: 없음";
     questFillEl.style.width = "0%";
     return;
   }

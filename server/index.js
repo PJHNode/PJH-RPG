@@ -89,6 +89,19 @@ function isNearShop(player) {
   return Math.hypot(player.x - SHOP_POSITION.x, player.y - SHOP_POSITION.y) <= SHOP_INTERACT_RADIUS;
 }
 
+// 퀘스트 NPC - 상점과 너무 겹치지 않게 최소 거리를 두고 별도 위치에 세운다.
+const QUEST_NPC_POSITION = (() => {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const candidate = randomLandSpawn({ nearCenter: true });
+    if (Math.hypot(candidate.x - SHOP_POSITION.x, candidate.y - SHOP_POSITION.y) > TILE_SIZE * 3) return candidate;
+  }
+  return { x: SHOP_POSITION.x + TILE_SIZE * 5, y: SHOP_POSITION.y };
+})();
+
+function isNearQuestNpc(player) {
+  return Math.hypot(player.x - QUEST_NPC_POSITION.x, player.y - QUEST_NPC_POSITION.y) <= SHOP_INTERACT_RADIUS;
+}
+
 // ---- 월드 아이템(픽업) ----
 let itemUid = 0;
 const worldItems = {}; // id -> { id, itemId, xp, gold, x, y }
@@ -305,7 +318,7 @@ function tickMonsters() {
     if (m.aggroId) {
       const target = players[m.aggroId];
       if (target && Math.hypot(target.x - m.x, target.y - m.y) <= CONTACT_RADIUS) {
-        damagePlayer(m.aggroId, def.damage);
+        damagePlayer(m.aggroId, def.damage, m.id);
       }
     }
   });
@@ -314,6 +327,20 @@ function tickMonsters() {
     "monstersUpdated",
     Object.values(monsters).map((m) => ({ id: m.id, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp, aggro: !!m.aggroId }))
   );
+}
+
+// 점(px,py)과 선분((x1,y1)-(x2,y2)) 사이의 최단 거리.
+function distanceToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return Math.hypot(px - x1, py - y1);
+
+  let t = ((px - x1) * dx + (py - y1) * dy) / lengthSq;
+  t = clamp(t, 0, 1);
+  const closestX = x1 + t * dx;
+  const closestY = y1 + t * dy;
+  return Math.hypot(px - closestX, py - closestY);
 }
 
 function tickArrows() {
@@ -326,6 +353,12 @@ function tickArrows() {
       return;
     }
 
+    // 화살은 초당 600px, tick은 100ms라 한 tick에 60px씩 건너뛴다. 점(현재 위치)만
+    // 검사하면 반경 16px짜리 몬스터를 그냥 지나쳐버리는("터널링") 경우가 잦았다 - 특히
+    // 먼 거리를 오래 날아갈수록 그런 순간이 여러 번 생기니 체감상 "멀리서 쏘면 안 맞는다"가 됨.
+    // 그래서 이전 위치 -> 현재 위치 선분 전체를 검사해서 그 사이를 스쳐 지나간 것도 잡아낸다.
+    const prevX = a.x;
+    const prevY = a.y;
     a.x += a.vx * dt;
     a.y += a.vy * dt;
 
@@ -336,7 +369,7 @@ function tickArrows() {
     }
 
     for (const m of Object.values(monsters)) {
-      if (Math.hypot(m.x - a.x, m.y - a.y) > ARROW_HIT_RADIUS) continue;
+      if (distanceToSegment(m.x, m.y, prevX, prevY, a.x, a.y) > ARROW_HIT_RADIUS) continue;
       delete arrows[a.id];
       io.emit("arrowRemoved", { id: a.id });
       damageMonster(m.id, a.damage, a.ownerId);
@@ -384,7 +417,7 @@ function creditQuestKill(socketId, monsterType) {
     if (leveledUp) io.emit("playerLevelChanged", { id: socketId, level: player.level });
 
     socket.emit("questCompleted", { monsterType, goldReward, xpReward });
-    player.quest = createQuest();
+    player.quest = null; // 다음 퀘스트는 자동으로 안 주고, NPC에게 다시 받아야 함
   }
 
   sendCharacterUpdate(socket, player);
@@ -404,14 +437,14 @@ function createDefaultCharacter() {
     gold: 0,
     inventory: new Array(INVENTORY_SIZE).fill(null),
     equipped: { weapon: null, armor: null },
-    quest: createQuest(),
+    quest: null, // NPC(퀘스트 담당자)에게 받아야 생김 - 접속하자마자 자동으로 주지 않음
     lastHitAt: 0,
     invulnerableUntil: 0,
   };
 }
 
 // 몬스터 접촉 데미지의 단일 진입점. 쿨다운/무적시간을 체크하고, 사망하면 마을 근처에서 부활시킨다.
-function damagePlayer(socketId, amount) {
+function damagePlayer(socketId, amount, monsterId) {
   const player = players[socketId];
   const socket = socketsById[socketId];
   if (!player || !socket) return;
@@ -423,6 +456,7 @@ function damagePlayer(socketId, amount) {
 
   player.hp = clamp(player.hp - amount, 0, player.maxHp);
   io.emit("playerHit", { id: socketId, x: player.x, y: player.y, amount, hp: player.hp, maxHp: player.maxHp });
+  if (monsterId) io.emit("monsterAttack", { id: monsterId, targetId: socketId });
 
   if (player.hp <= 0) {
     respawnPlayer(socketId);
@@ -443,6 +477,13 @@ function respawnPlayer(socketId) {
   player.hp = player.maxHp;
   player.gold = Math.floor(player.gold * 0.9); // 죽으면 골드 10% 페널티
   player.invulnerableUntil = Date.now() + PLAYER_RESPAWN_INVULN_MS;
+
+  // 죽인 몬스터가 부활한 나를 그대로 계속 쫓아오지 않도록 어그로를 풀어준다
+  // (원래는 DEAGGRO_RADIUS를 벗어나면 자연히 풀리지만, 마을 근처 몬스터는 부활 지점과
+  // 가까워서 즉시 재추격하는 경우가 있었음)
+  Object.values(monsters).forEach((m) => {
+    if (m.aggroId === socketId) m.aggroId = null;
+  });
 
   io.emit("playerDied", { id: socketId });
   socket.emit("respawn", { x: player.x, y: player.y, hp: player.hp, maxHp: player.maxHp, gold: player.gold });
@@ -527,6 +568,7 @@ io.on("connection", (socket) => {
     monsters,
     obstacles,
     shop: SHOP_POSITION,
+    questNpc: QUEST_NPC_POSITION,
     maxLevel: MAX_LEVEL,
   });
 
@@ -729,6 +771,20 @@ io.on("connection", (socket) => {
     if (slot.qty <= 0) player.inventory[slotIndex] = null;
     player.gold += sellPrice;
 
+    sendCharacterUpdate(socket, player);
+  });
+
+  socket.on("requestQuest", () => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    if (!isNearQuestNpc(player)) {
+      socket.emit("questFailed", { reason: "too_far" });
+      return;
+    }
+    if (player.quest) return; // 이미 진행 중인 퀘스트가 있으면 그대로 둠(재요청은 no-op)
+
+    player.quest = createQuest();
     sendCharacterUpdate(socket, player);
   });
 
