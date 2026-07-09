@@ -150,15 +150,25 @@ function blockedByObstacle(x, y) {
 // ---- 몬스터 ----
 // 섬 중심에서의 거리로 스폰 지역을 나눠, 마을에서 멀어질수록 강한 몬스터가 나오게 한다.
 const MONSTER_TYPES = {
-  slime: { name: "슬라임", maxHp: 15, xp: 10, gold: 3, speed: 40, minRadius: 0, maxRadius: 25, count: 12 },
-  wolf: { name: "늑대", maxHp: 30, xp: 25, gold: 8, speed: 70, minRadius: 25, maxRadius: 45, count: 10 },
-  crab: { name: "게", maxHp: 45, xp: 40, gold: 15, speed: 30, minRadius: 45, maxRadius: ISLAND_RADIUS, count: 8 },
+  slime: { name: "슬라임", maxHp: 15, xp: 10, gold: 3, speed: 40, damage: 2, minRadius: 0, maxRadius: 25, count: 12 },
+  wolf: { name: "늑대", maxHp: 30, xp: 25, gold: 8, speed: 70, damage: 4, minRadius: 25, maxRadius: 45, count: 10 },
+  crab: { name: "게", maxHp: 45, xp: 40, gold: 15, speed: 30, damage: 6, minRadius: 45, maxRadius: ISLAND_RADIUS, count: 8 },
 };
 const MONSTER_WANDER_RADIUS = 150;
 const MONSTER_RESPAWN_MS = 10000;
 
+// 몬스터 어그로: 이 반경 안에 들어오면 배회 대신 그 플레이어를 쫓아간다.
+// 추격 해제 반경을 더 넓게 잡아서(히스테리시스) 경계선에서 어그로가 깜빡이지 않게 함.
+const AGGRO_RADIUS = 110;
+const DEAGGRO_RADIUS = 220;
+
+// 몬스터 접촉 데미지: 이 거리 안에 있으면 일정 주기로 플레이어를 때린다.
+const CONTACT_RADIUS = 22;
+const PLAYER_HIT_COOLDOWN_MS = 800;
+const PLAYER_RESPAWN_INVULN_MS = 1500;
+
 let monsterUid = 0;
-const monsters = {}; // id -> { id, type, x, y, hp, maxHp, spawnX, spawnY, targetX, targetY, nextWanderAt }
+const monsters = {}; // id -> { id, type, x, y, hp, maxHp, spawnX, spawnY, targetX, targetY, nextWanderAt, aggroId }
 
 function spawnMonster(type) {
   const def = MONSTER_TYPES[type];
@@ -176,6 +186,7 @@ function spawnMonster(type) {
     targetX: spawn.x,
     targetY: spawn.y,
     nextWanderAt: 0,
+    aggroId: null,
   };
   return monsters[id];
 }
@@ -188,11 +199,13 @@ function seedMonsters() {
 seedMonsters();
 
 // 처치/사망 시 부르는 단일 진입점: 근접 공격과 화살 명중 둘 다 여기로 들어온다.
-function damageMonster(monsterId, amount) {
+// attackerId가 있으면 그 플레이어의 처치 퀘스트 진행도를 올린다.
+function damageMonster(monsterId, amount, attackerId) {
   const m = monsters[monsterId];
   if (!m) return;
 
   m.hp -= amount;
+  m.aggroId = attackerId ?? m.aggroId; // 맞으면 때린 사람을 바로 쫓아가기 시작
 
   if (m.hp > 0) {
     io.emit("monsterDamaged", { id: monsterId, hp: m.hp, maxHp: m.maxHp });
@@ -202,6 +215,8 @@ function damageMonster(monsterId, amount) {
   const def = MONSTER_TYPES[m.type];
   delete monsters[monsterId];
   io.emit("monsterDied", { id: monsterId });
+
+  if (attackerId) creditQuestKill(attackerId, m.type);
 
   // 처치 보상은 기존 월드 아이템 픽업 시스템을 그대로 재사용해 몬스터 위치에 드랍
   const xpDrop = createWorldItem(m.x, m.y, null, def.xp, 0);
@@ -238,10 +253,38 @@ function angleDiff(a, b) {
 // ---- 게임 tick: 몬스터 배회 + 화살 이동/명중 판정 ----
 const TICK_MS = 100;
 
+function findAggroTarget(m) {
+  // 이미 쫓고 있는 플레이어가 있으면 DEAGGRO_RADIUS를 벗어나기 전까진 계속 쫓는다(히스테리시스).
+  if (m.aggroId) {
+    const current = players[m.aggroId];
+    if (current && Math.hypot(current.x - m.x, current.y - m.y) <= DEAGGRO_RADIUS) return m.aggroId;
+    m.aggroId = null;
+  }
+
+  let closestId = null;
+  let closestDist = AGGRO_RADIUS;
+  Object.entries(players).forEach(([id, p]) => {
+    const dist = Math.hypot(p.x - m.x, p.y - m.y);
+    if (dist <= closestDist) {
+      closestDist = dist;
+      closestId = id;
+    }
+  });
+  return closestId;
+}
+
 function tickMonsters() {
   const now = Date.now();
+
   Object.values(monsters).forEach((m) => {
-    if (now >= m.nextWanderAt) {
+    const def = MONSTER_TYPES[m.type];
+    m.aggroId = findAggroTarget(m);
+
+    if (m.aggroId) {
+      const target = players[m.aggroId];
+      m.targetX = target.x;
+      m.targetY = target.y;
+    } else if (now >= m.nextWanderAt) {
       const angle = Math.random() * Math.PI * 2;
       const dist = Math.random() * MONSTER_WANDER_RADIUS;
       m.targetX = clamp(m.spawnX + Math.cos(angle) * dist, TILE_SIZE, WORLD_WIDTH - TILE_SIZE);
@@ -249,7 +292,6 @@ function tickMonsters() {
       m.nextWanderAt = now + 2000 + Math.random() * 3000;
     }
 
-    const def = MONSTER_TYPES[m.type];
     const dx = m.targetX - m.x;
     const dy = m.targetY - m.y;
     const dist = Math.hypot(dx, dy);
@@ -259,11 +301,18 @@ function tickMonsters() {
       m.x += (dx / dist) * move;
       m.y += (dy / dist) * move;
     }
+
+    if (m.aggroId) {
+      const target = players[m.aggroId];
+      if (target && Math.hypot(target.x - m.x, target.y - m.y) <= CONTACT_RADIUS) {
+        damagePlayer(m.aggroId, def.damage);
+      }
+    }
   });
 
   io.emit(
     "monstersUpdated",
-    Object.values(monsters).map((m) => ({ id: m.id, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp }))
+    Object.values(monsters).map((m) => ({ id: m.id, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp, aggro: !!m.aggroId }))
   );
 }
 
@@ -290,7 +339,7 @@ function tickArrows() {
       if (Math.hypot(m.x - a.x, m.y - a.y) > ARROW_HIT_RADIUS) continue;
       delete arrows[a.id];
       io.emit("arrowRemoved", { id: a.id });
-      damageMonster(m.id, a.damage);
+      damageMonster(m.id, a.damage, a.ownerId);
       break;
     }
   });
@@ -303,6 +352,43 @@ setInterval(() => {
 
 // ---- 플레이어 ----
 const players = {}; // socket.id -> state
+const socketsById = {}; // socket.id -> socket 인스턴스 (tick 루프 등 io.on 콜백 밖에서 emit할 때 필요)
+
+// ---- 퀘스트: 특정 몬스터 N마리 처치 -> XP/골드 보상, 완료 시 자동으로 다음 퀘스트 배정 ----
+// NPC와의 대화 없이 접속하는 순간 하나씩 자동 배정되는 단순한 형태(반복 가능한 처치 퀘스트).
+const QUEST_TARGET_MIN = 4;
+const QUEST_TARGET_MAX = 8;
+
+function createQuest() {
+  const types = Object.keys(MONSTER_TYPES);
+  const monsterType = types[Math.floor(Math.random() * types.length)];
+  const target = QUEST_TARGET_MIN + Math.floor(Math.random() * (QUEST_TARGET_MAX - QUEST_TARGET_MIN + 1));
+  return { monsterType, target, progress: 0 };
+}
+
+function creditQuestKill(socketId, monsterType) {
+  const player = players[socketId];
+  const socket = socketsById[socketId];
+  if (!player || !socket || !player.quest) return;
+  if (player.quest.monsterType !== monsterType) return;
+
+  player.quest.progress += 1;
+
+  if (player.quest.progress >= player.quest.target) {
+    const def = MONSTER_TYPES[monsterType];
+    const goldReward = player.quest.target * 5;
+    const xpReward = player.quest.target * def.xp;
+
+    player.gold += goldReward;
+    const leveledUp = applyXp(player, xpReward);
+    if (leveledUp) io.emit("playerLevelChanged", { id: socketId, level: player.level });
+
+    socket.emit("questCompleted", { monsterType, goldReward, xpReward });
+    player.quest = createQuest();
+  }
+
+  sendCharacterUpdate(socket, player);
+}
 
 function createDefaultCharacter() {
   const spawn = randomLandSpawn({ nearCenter: true });
@@ -318,7 +404,49 @@ function createDefaultCharacter() {
     gold: 0,
     inventory: new Array(INVENTORY_SIZE).fill(null),
     equipped: { weapon: null, armor: null },
+    quest: createQuest(),
+    lastHitAt: 0,
+    invulnerableUntil: 0,
   };
+}
+
+// 몬스터 접촉 데미지의 단일 진입점. 쿨다운/무적시간을 체크하고, 사망하면 마을 근처에서 부활시킨다.
+function damagePlayer(socketId, amount) {
+  const player = players[socketId];
+  const socket = socketsById[socketId];
+  if (!player || !socket) return;
+
+  const now = Date.now();
+  if (now < player.invulnerableUntil) return;
+  if (now - player.lastHitAt < PLAYER_HIT_COOLDOWN_MS) return;
+  player.lastHitAt = now;
+
+  player.hp = clamp(player.hp - amount, 0, player.maxHp);
+  io.emit("playerHit", { id: socketId, x: player.x, y: player.y, amount, hp: player.hp, maxHp: player.maxHp });
+
+  if (player.hp <= 0) {
+    respawnPlayer(socketId);
+    return;
+  }
+
+  sendCharacterUpdate(socket, player);
+}
+
+function respawnPlayer(socketId) {
+  const player = players[socketId];
+  const socket = socketsById[socketId];
+  if (!player || !socket) return;
+
+  const spawn = randomLandSpawn({ nearCenter: true });
+  player.x = spawn.x;
+  player.y = spawn.y;
+  player.hp = player.maxHp;
+  player.gold = Math.floor(player.gold * 0.9); // 죽으면 골드 10% 페널티
+  player.invulnerableUntil = Date.now() + PLAYER_RESPAWN_INVULN_MS;
+
+  io.emit("playerDied", { id: socketId });
+  socket.emit("respawn", { x: player.x, y: player.y, hp: player.hp, maxHp: player.maxHp, gold: player.gold });
+  io.emit("playerMoved", { id: socketId, x: player.x, y: player.y, rotation: player.rotation });
 }
 
 function sanitizeInventory(raw) {
@@ -372,6 +500,7 @@ function sendCharacterUpdate(socket, player, leveledUp = false) {
     gold: player.gold,
     inventory: player.inventory,
     equipped: player.equipped,
+    quest: player.quest,
     leveledUp,
   });
 }
@@ -386,6 +515,7 @@ function clampInt(value, min, max) {
 
 io.on("connection", (socket) => {
   players[socket.id] = createDefaultCharacter();
+  socketsById[socket.id] = socket;
 
   console.log(`[connect] ${socket.id} (${Object.keys(players).length} online)`);
 
@@ -455,7 +585,7 @@ io.on("connection", (socket) => {
       const angleToMonster = Math.atan2(dy, dx);
       if (Math.abs(angleDiff(angleToMonster, data.angle)) > MELEE_ARC / 2) return;
 
-      damageMonster(m.id, damage);
+      damageMonster(m.id, damage, socket.id);
     });
   });
 
@@ -624,6 +754,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     delete players[socket.id];
+    delete socketsById[socket.id];
     io.emit("playerLeft", { id: socket.id });
     console.log(`[disconnect] ${socket.id} (${Object.keys(players).length} online)`);
   });

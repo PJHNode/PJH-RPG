@@ -28,6 +28,11 @@ export default class Network {
     this.socket.on("characterUpdated", (data) => handlers.onCharacterUpdated?.(data));
     this.socket.on("pickupFailed", (data) => handlers.onPickupFailed?.(data));
     this.socket.on("shopFailed", (data) => handlers.onShopFailed?.(data));
+
+    this.socket.on("playerHit", (data) => handlers.onPlayerHit?.(data));
+    this.socket.on("playerDied", (data) => handlers.onPlayerDied?.(data));
+    this.socket.on("respawn", (data) => handlers.onRespawn?.(data));
+    this.socket.on("questCompleted", (data) => handlers.onQuestCompleted?.(data));
   }
 
   sendMovement(x, y, rotation) {

@@ -2,12 +2,17 @@ import { ITEMS } from "./items.js";
 
 const HOTBAR_SIZE = 5;
 
+// server/index.js의 MONSTER_TYPES 이름과 맞춰둘 것 (퀘스트 문구 표시용)
+const MONSTER_NAMES = { slime: "슬라임", wolf: "늑대", crab: "게" };
+
 // ---- HUD ----
 const hpFill = document.getElementById("hp-fill");
 const hpText = document.getElementById("hp-text");
 const xpFill = document.getElementById("xp-fill");
 const levelText = document.getElementById("level-text");
 const goldText = document.getElementById("gold-text");
+const questLabelEl = document.getElementById("quest-label");
+const questFillEl = document.getElementById("quest-fill");
 
 // ---- 핫바 / 장착 ----
 const hotbarEl = document.getElementById("hotbar");
@@ -144,9 +149,22 @@ export function renderCharacter(character, xpToNext) {
   equipWeaponEl.textContent = character.equipped.weapon ? ITEMS[character.equipped.weapon].name : "무기 없음";
   equipArmorEl.textContent = character.equipped.armor ? ITEMS[character.equipped.armor].name : "방어구 없음";
 
+  renderQuest(character.quest);
   renderHotbar(character);
   if (activeModal === "inventory") renderInventoryModal(character);
   if (activeModal === "shop") renderShopModal(character);
+}
+
+function renderQuest(quest) {
+  if (!quest) {
+    questLabelEl.textContent = "퀘스트: -";
+    questFillEl.style.width = "0%";
+    return;
+  }
+
+  const name = MONSTER_NAMES[quest.monsterType] ?? quest.monsterType;
+  questLabelEl.textContent = `퀘스트: ${name} 처치 ${quest.progress}/${quest.target}`;
+  questFillEl.style.width = `${Math.min(100, (quest.progress / quest.target) * 100)}%`;
 }
 
 function renderHotbar(character) {

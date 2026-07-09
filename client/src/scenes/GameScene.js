@@ -37,6 +37,8 @@ const MONSTER_VISUALS = {
   crab: { color: 0xdd5533, size: 30 },
 };
 
+const MONSTER_NAMES = { slime: "슬라임", wolf: "늑대", crab: "게" };
+
 const ATTACK_COOLDOWN_MS = 300;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 3;
@@ -443,9 +445,12 @@ export default class GameScene extends Phaser.Scene {
       },
       onMonsterSpawned: (m) => this.spawnMonster(m),
       onMonsterDamaged: ({ id, hp, maxHp }) => {
+        const entry = this.monsters.get(id);
+        const previousHp = entry?.lastHp ?? hp;
         this.updateMonsterHp(id, hp, maxHp);
         this.flashMonster(id);
         playHitSound();
+        if (entry) this.spawnDamageText(entry.sprite.x, entry.sprite.y, Math.max(0, previousHp - hp), "#ffe066");
       },
       onMonsterDied: ({ id }) => this.removeMonster(id),
       onMonstersUpdated: (list) => {
@@ -474,6 +479,24 @@ export default class GameScene extends Phaser.Scene {
         if (reason === "not_enough_gold") showToast("골드가 부족합니다");
         else if (reason === "inventory_full") showToast("인벤토리가 가득 찼습니다");
         else if (reason === "too_far") showToast("상점에 가까이 가야 합니다");
+      },
+      onPlayerHit: ({ id, x, y, amount }) => {
+        this.spawnDamageText(x, y, amount, "#ff6b6b");
+        playHitSound();
+        if (id === this.network.id) this.flashLocalPlayer();
+        else this.flashRemotePlayer(id);
+      },
+      onPlayerDied: ({ id }) => {
+        if (id !== this.network.id) {
+          const entry = this.remotePlayers.get(id);
+          if (entry) showToast(`플레이어가 쓰러졌습니다`);
+        }
+      },
+      onRespawn: ({ x, y, hp, maxHp, gold }) => this.handleRespawn(x, y, hp, maxHp, gold),
+      onQuestCompleted: ({ monsterType, goldReward, xpReward }) => {
+        const name = MONSTER_NAMES[monsterType] ?? monsterType;
+        showToast(`퀘스트 완료! ${name} 처치 - 골드 +${goldReward}, XP +${xpReward}`);
+        playLevelUpSound();
       },
     });
   }
@@ -505,6 +528,7 @@ export default class GameScene extends Phaser.Scene {
 
     const sprite = this.physics.add.image(state.x, state.y, "tex-player");
     sprite.setTint(state.color ?? 0xffffff);
+    sprite._pjhColor = state.color ?? 0xffffff; // flashLocalPlayer가 피격 플래시 후 되돌릴 원래 색
     sprite.setCollideWorldBounds(true);
     this.localPlayer = sprite;
 
@@ -535,7 +559,9 @@ export default class GameScene extends Phaser.Scene {
   spawnRemotePlayer(id, state) {
     const shadow = this.add.image(state.x, state.y, "tex-shadow");
     const sprite = this.add.image(state.x, state.y, "tex-player");
-    sprite.setTint(state.color ?? 0xaaaaaa);
+    const color = state.color ?? 0xaaaaaa;
+    sprite.setTint(color);
+    sprite._pjhColor = color; // flashRemotePlayer가 피격 플래시 후 원래 색으로 되돌릴 때 씀
     const label = this.add
       .text(state.x, state.y - 24, `Lv.${state.level ?? 1}`, { font: "10px monospace", fill: "#8a8a92" })
       .setOrigin(0.5)
@@ -580,6 +606,75 @@ export default class GameScene extends Phaser.Scene {
     entry.sprite.setTintFill(0xffffff);
     this.time.delayedCall(80, () => {
       if (entry.sprite.active) entry.sprite.clearTint();
+    });
+  }
+
+  // 몬스터/플레이어가 맞을 때 위로 떠오르며 사라지는 데미지 숫자
+  spawnDamageText(x, y, amount, color) {
+    if (!amount) return;
+    const text = this.add
+      .text(x, y - 16, `-${amount}`, { font: "bold 13px monospace", fill: color })
+      .setOrigin(0.5)
+      .setDepth(TOP_DEPTH);
+
+    this.tweens.add({
+      targets: text,
+      y: y - 40,
+      alpha: 0,
+      duration: 600,
+      ease: "Cubic.Out",
+      onComplete: () => text.destroy(),
+    });
+  }
+
+  flashLocalPlayer() {
+    if (!this.localPlayer) return;
+    const originalColor = this.localPlayer._pjhColor ?? 0xffffff;
+    this.localPlayer.setTintFill(0xff5555);
+    this.time.delayedCall(90, () => {
+      if (this.localPlayer?.active) this.localPlayer.setTint(originalColor);
+    });
+  }
+
+  flashRemotePlayer(id) {
+    const entry = this.remotePlayers.get(id);
+    if (!entry) return;
+    const originalColor = entry.sprite._pjhColor ?? 0xaaaaaa;
+    entry.sprite.setTintFill(0xff5555);
+    this.time.delayedCall(90, () => {
+      if (entry.sprite.active) entry.sprite.setTint(originalColor);
+    });
+  }
+
+  // 사망 -> 부활: 서버가 정해준 위치로 즉시 순간이동시키고, 잠깐 무적임을 깜빡임으로 보여준다.
+  handleRespawn(x, y, hp, maxHp, gold) {
+    if (!this.localPlayer) return;
+
+    this.localPlayer.x = x;
+    this.localPlayer.y = y;
+    this.localPlayer.body.setVelocity(0, 0);
+    this.character.hp = hp;
+    this.character.maxHp = maxHp;
+    this.character.gold = gold;
+    this.updateLocalHpBar();
+
+    // characterUpdated와 별도 이벤트라 applyCharacterState를 안 거치므로 HUD DOM도 직접 갱신해야 함
+    // (실제로 이 줄을 빠뜨려서 부활 후에도 HUD가 사망 직전 체력에 멈춰 있던 버그가 있었음)
+    const xpToNext = this.character.level >= MAX_LEVEL ? 1 : xpToReachLevel(this.character.level + 1);
+    renderCharacter(this.character, xpToNext);
+    saveCharacter(this.character);
+
+    showToast("쓰러졌습니다... 마을 근처에서 부활 (골드 10% 손실)");
+
+    this.tweens.add({
+      targets: this.localPlayer,
+      alpha: 0.3,
+      duration: 120,
+      yoyo: true,
+      repeat: 6,
+      onComplete: () => {
+        if (this.localPlayer?.active) this.localPlayer.setAlpha(1);
+      },
     });
   }
 

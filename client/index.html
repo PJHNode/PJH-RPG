@@ -68,6 +68,14 @@
   #xp-fill { background: var(--xp); }
   #hp-text { font-size: 11px; color: var(--text-dim); text-align: right; }
 
+  #quest-info {
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  #quest-label { font-size: 12px; margin-bottom: 4px; }
+  #quest-fill { background: #c98bff; }
+
   #shop-button {
     margin-top: 4px;
     padding: 6px 10px;
@@ -244,6 +252,10 @@
     <div class="bar-track"><div id="xp-fill" class="bar-fill"></div></div>
     <button id="shop-button">상점 열기</button>
     <div id="shop-hint">상점에 가까이 가야 이용할 수 있어요</div>
+    <div id="quest-info">
+      <div id="quest-label">퀘스트: -</div>
+      <div class="bar-track"><div id="quest-fill" class="bar-fill"></div></div>
+    </div>
   </div>
 
   <button id="admin-button">⚙ 관리자 (베타)</button>
