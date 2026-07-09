@@ -21,6 +21,7 @@ import {
   updateShopProximity,
   updateQuestNpcProximity,
   toggleNpcDialogue,
+  toggleShop,
 } from "../ui.js";
 import { buildMinimapTerrain, renderMinimap } from "../minimap.js";
 import {
@@ -39,13 +40,15 @@ const TILE_COLORS = {
   [TILE_TYPES.WATER]: 0x2a5d8f,
 };
 
+// 컨셉: "귀여운 곤충 MMORPG" - 픽셀아트 대신 절차적으로 그리는 도트/벡터 벌레 실루엣.
+// 기존 slime/wolf/crab 타입/밸런스는 그대로 두고 겉모습만 곤충으로 재해석한다.
 const MONSTER_VISUALS = {
-  slime: { color: 0x55cc55, size: 28 },
-  wolf: { color: 0x9a9aa2, size: 32 },
-  crab: { color: 0xdd5533, size: 30 },
+  slime: { kind: "ladybug", color: 0xe8483c, spotColor: 0x1a1a1a, size: 26 },
+  wolf: { kind: "stagBeetle", color: 0x4a3728, spotColor: 0x1a120c, size: 34 },
+  crab: { kind: "bombardier", color: 0x2e8b6f, spotColor: 0xffcf4d, size: 30 },
 };
 
-const MONSTER_NAMES = { slime: "슬라임", wolf: "늑대", crab: "게" };
+const MONSTER_NAMES = { slime: "무당벌레", wolf: "장수풍뎅이", crab: "폭탄먼지벌레" };
 
 const ATTACK_COOLDOWN_MS = 300;
 const MIN_ZOOM = 1;
@@ -77,6 +80,7 @@ export default class GameScene extends Phaser.Scene {
     this.lastAttackTime = 0;
     this.menuOpen = false; // 인벤토리/상점/어드민 모달이 열려 있으면 이동/공격 입력을 멈춘다
     this.shopPosition = null;
+    this.shopSprite = null;
     this.shopNear = false;
     this.questNpcPosition = null;
     this.questNpcNear = false;
@@ -86,13 +90,14 @@ export default class GameScene extends Phaser.Scene {
   preload() {
     this.makeCharacterTexture("tex-player", 34);
     Object.entries(MONSTER_VISUALS).forEach(([type, v]) => {
-      this.makeMonsterTexture(`tex-monster-${type}`, v.size, v.color);
+      this.makeMonsterTexture(`tex-monster-${type}`, v);
     });
     this.makeArrowTexture();
     this.makeMonsterProjectileTexture();
     this.makeSlashTexture();
     this.makeShadowTexture();
     this.makeCircleTexture("tex-item", 8, 0xffffff);
+    this.makeCoinTexture();
     this.makeObstacleTextures();
     this.makeShopTexture();
     this.makeQuestNpcTexture();
@@ -108,57 +113,128 @@ export default class GameScene extends Phaser.Scene {
     g.destroy();
   }
 
-  // 원 하나짜리 placeholder 대신 탑다운 시점에서 사람처럼 보이도록 어깨(몸통)+머리로 구성.
+  // 플레이어: 통통한 배(abdomen) + 가슴(thorax) + 머리로 이어지는 귀여운 벌레 실루엣.
   // 회전(rotation=0)일 때 머리가 오른쪽(+x)을 향하게 그려서, 캐릭터 회전이 곧 "바라보는 방향"이
   // 눈에 보이게 만든다(원은 회전해도 겉보기 변화가 없어서 조준 방향을 알 수 없었음).
-  // 전체를 흰색으로 그려서 setTint(플레이어 색상)로 색을 입힌다.
+  // 몸통은 흰색으로 그려서 setTint(플레이어 색상)로 색을 입히고, 더듬이/다리/눈은 진한 색이라
+  // 틴트해도 거의 그대로 보인다.
   makeCharacterTexture(key, size) {
     const cx = size / 2;
     const cy = size / 2;
-    const bodyRx = size * 0.34;
-    const bodyRy = size * 0.29;
-    const headRadius = size * 0.19;
-    const headOffset = bodyRx * 0.62;
-    const headCx = cx + headOffset;
+    const abdomenCx = cx - size * 0.08;
+    const abdomenRx = size * 0.33;
+    const abdomenRy = size * 0.27;
+    const thoraxCx = cx + size * 0.1;
+    const thoraxR = size * 0.17;
+    const headCx = cx + size * 0.32;
+    const headR = size * 0.15;
 
     const g = this.make.graphics({ x: 0, y: 0, add: false });
 
+    // 다리 - 몸통 위/아래로 짧게 뻗어 걷는 벌레 느낌을 준다
+    g.lineStyle(1.6, 0x2a1a10, 0.55);
+    [-0.55, 0, 0.55].forEach((t) => {
+      const lx = abdomenCx + t * abdomenRx * 0.9;
+      g.lineBetween(lx, cy + abdomenRy * 0.55, lx - 2, cy + abdomenRy * 0.95 + Math.abs(t) * 2);
+      g.lineBetween(lx, cy - abdomenRy * 0.55, lx - 2, cy - abdomenRy * 0.95 - Math.abs(t) * 2);
+    });
+
+    // 더듬이 (텍스처 캔버스 폭이 size라서 팁이 밖으로 잘리지 않도록 x는 짧게, y로 길게 뻗는다)
+    g.lineStyle(1.6, 0x1a1a1a, 0.7);
+    g.lineBetween(headCx + headR * 0.6, cy - headR * 0.5, headCx + headR * 0.95, cy - headR * 1.9);
+    g.lineBetween(headCx + headR * 0.6, cy + headR * 0.5, headCx + headR * 0.95, cy + headR * 1.9);
+    g.fillStyle(0x1a1a1a, 0.7);
+    g.fillCircle(headCx + headR * 0.95, cy - headR * 1.9, 1);
+    g.fillCircle(headCx + headR * 0.95, cy + headR * 1.9, 1);
+
+    // 배 -> 가슴 -> 머리 순서로 겹쳐 그려 통통한 벌레 몸통을 만든다
     g.fillStyle(0xffffff, 1);
-    g.fillEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
-    g.fillCircle(headCx, cy, headRadius);
+    g.fillEllipse(abdomenCx, cy, abdomenRx * 2, abdomenRy * 2);
+    g.fillCircle(thoraxCx, cy, thoraxR);
+    g.fillCircle(headCx, cy, headR);
 
-    g.lineStyle(2, 0x000000, 0.35);
-    g.strokeEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
-    g.strokeCircle(headCx, cy, headRadius);
+    g.lineStyle(1.6, 0x000000, 0.3);
+    g.strokeEllipse(abdomenCx, cy, abdomenRx * 2, abdomenRy * 2);
+    g.strokeCircle(headCx, cy, headR);
 
-    // 얼굴 방향을 알려주는 눈(진한 색이라 틴트해도 거의 그대로 보임)
-    g.fillStyle(0x000000, 0.6);
-    g.fillCircle(headCx + headRadius * 0.35, cy - headRadius * 0.4, 1.6);
-    g.fillCircle(headCx + headRadius * 0.35, cy + headRadius * 0.4, 1.6);
+    // 딱지날개가 갈라진 것처럼 보이는 등선 + 광택(하이라이트)으로 반질반질한 껍질 느낌
+    g.lineStyle(1.2, 0x000000, 0.25);
+    g.lineBetween(abdomenCx - abdomenRx * 0.75, cy, thoraxCx, cy);
+    g.fillStyle(0xffffff, 0.35);
+    g.fillEllipse(abdomenCx - abdomenRx * 0.25, cy - abdomenRy * 0.4, abdomenRx * 0.7, abdomenRy * 0.35);
+
+    // 눈
+    g.fillStyle(0x000000, 0.75);
+    g.fillCircle(headCx + headR * 0.3, cy - headR * 0.45, 1.8);
+    g.fillCircle(headCx + headR * 0.3, cy + headR * 0.45, 1.8);
 
     g.generateTexture(key, size, size);
     g.destroy();
   }
 
-  // 몬스터: 뿔 두 개 달린 슬라임류 실루엣. 종류별로 색만 다르게 재사용한다.
-  makeMonsterTexture(key, size, color) {
+  // 몬스터: 종류별로 실루엣이 다른 곤충(무당벌레/장수풍뎅이/폭탄먼지벌레)으로 그린다.
+  // visual = { kind, color, spotColor, size } (MONSTER_VISUALS 참고)
+  makeMonsterTexture(key, visual) {
+    const { size, color, spotColor, kind } = visual;
     const cx = size / 2;
     const cy = size / 2;
-    const bodyR = size * 0.32;
+    const bodyRx = size * 0.36;
+    const bodyRy = size * 0.3;
 
     const g = this.make.graphics({ x: 0, y: 0, add: false });
 
-    g.fillStyle(color, 1);
-    g.fillTriangle(cx - bodyR * 0.9, cy - bodyR * 0.5, cx - bodyR * 0.3, cy - bodyR * 1.6, cx - bodyR * 0.1, cy - bodyR * 0.5);
-    g.fillTriangle(cx + bodyR * 0.9, cy - bodyR * 0.5, cx + bodyR * 0.3, cy - bodyR * 1.6, cx + bodyR * 0.1, cy - bodyR * 0.5);
-    g.fillCircle(cx, cy, bodyR);
+    // 공통 베이스: 짧은 다리 6개
+    g.lineStyle(1.4, 0x000000, 0.35);
+    [-0.5, 0, 0.5].forEach((t) => {
+      const lx = cx + t * bodyRx;
+      g.lineBetween(lx, cy + bodyRy * 0.6, lx, cy + bodyRy + 3);
+      g.lineBetween(lx, cy - bodyRy * 0.6, lx, cy - bodyRy - 3);
+    });
 
-    g.lineStyle(2, 0x000000, 0.4);
-    g.strokeCircle(cx, cy, bodyR);
-
-    g.fillStyle(0x000000, 0.8);
-    g.fillCircle(cx - bodyR * 0.32, cy - bodyR * 0.1, 1.8);
-    g.fillCircle(cx + bodyR * 0.32, cy - bodyR * 0.1, 1.8);
+    if (kind === "ladybug") {
+      // 둥근 몸 + 검은 머리 + 등에 점무늬가 있는 무당벌레
+      g.fillStyle(color, 1);
+      g.fillEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
+      g.lineStyle(1.4, 0x000000, 0.4);
+      g.lineBetween(cx, cy - bodyRy, cx, cy + bodyRy);
+      g.strokeEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
+      g.fillStyle(0x1a1a1a, 1);
+      g.fillCircle(cx - bodyRx * 0.85, cy, bodyRy * 0.55);
+      g.fillStyle(spotColor, 1);
+      g.fillCircle(cx + bodyRx * 0.35, cy - bodyRy * 0.4, size * 0.06);
+      g.fillCircle(cx + bodyRx * 0.35, cy + bodyRy * 0.4, size * 0.06);
+      g.fillCircle(cx + bodyRx * 0.85, cy, size * 0.06);
+      g.fillStyle(0xffffff, 0.9);
+      g.fillCircle(cx - bodyRx * 1.05, cy - bodyRy * 0.25, 1.6);
+      g.fillCircle(cx - bodyRx * 1.05, cy + bodyRy * 0.25, 1.6);
+    } else if (kind === "stagBeetle") {
+      // 크고 각진 몸 + 앞으로 뻗은 큰 집게뿔을 가진 장수풍뎅이
+      g.fillStyle(color, 1);
+      g.fillEllipse(cx, cy, bodyRx * 2, bodyRy * 1.9);
+      g.lineStyle(1.6, 0x000000, 0.4);
+      g.strokeEllipse(cx, cy, bodyRx * 2, bodyRy * 1.9);
+      g.fillStyle(spotColor, 1);
+      g.fillCircle(cx - bodyRx * 0.9, cy, bodyRy * 0.5);
+      g.lineStyle(2.2, spotColor, 1);
+      g.lineBetween(cx - bodyRx * 1.1, cy - 3, cx - bodyRx * 1.35, cy - bodyRy * 0.75);
+      g.lineBetween(cx - bodyRx * 1.1, cy + 3, cx - bodyRx * 1.35, cy + bodyRy * 0.75);
+      g.fillStyle(0x000000, 0.85);
+      g.fillCircle(cx - bodyRx * 1.0, cy - bodyRy * 0.2, 1.6);
+      g.fillCircle(cx - bodyRx * 1.0, cy + bodyRy * 0.2, 1.6);
+    } else {
+      // bombardier: 길쭉한 몸 + 꼬리 쪽 경고색 밴드(원거리 공격을 예고하는 폭탄먼지벌레)
+      g.fillStyle(color, 1);
+      g.fillEllipse(cx, cy, bodyRx * 2.1, bodyRy * 1.7);
+      g.lineStyle(1.4, 0x000000, 0.4);
+      g.strokeEllipse(cx, cy, bodyRx * 2.1, bodyRy * 1.7);
+      g.fillStyle(spotColor, 1);
+      g.fillEllipse(cx + bodyRx * 0.75, cy, bodyRx * 0.6, bodyRy * 1.5);
+      g.fillStyle(0x0f2a22, 1);
+      g.fillCircle(cx - bodyRx * 0.95, cy, bodyRy * 0.45);
+      g.fillStyle(0xffffff, 0.9);
+      g.fillCircle(cx - bodyRx * 1.15, cy - bodyRy * 0.2, 1.5);
+      g.fillCircle(cx - bodyRx * 1.15, cy + bodyRy * 0.2, 1.5);
+    }
 
     g.generateTexture(key, size, size);
     g.destroy();
@@ -183,6 +259,22 @@ export default class GameScene extends Phaser.Scene {
     g.lineStyle(1, 0x0b0b0d, 0.3);
     g.strokeCircle(7, 7, 7);
     g.generateTexture("tex-monster-projectile", 14, 14);
+    g.destroy();
+  }
+
+  // 골드 드롭: 예전엔 흰 원에 노란 틴트만 입혀서 "이게 뭔지 모르겠다"는 지적을 받았다.
+  // 동전처럼 보이도록 테두리 + 안쪽 하이라이트 원 + 세로선(동전 각인)을 그린 전용 텍스처.
+  makeCoinTexture() {
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.fillStyle(0xffd700, 1);
+    g.fillCircle(8, 8, 8);
+    g.fillStyle(0xffe999, 1);
+    g.fillCircle(8, 8, 5.3);
+    g.lineStyle(1, 0xb8860b, 0.9);
+    g.strokeCircle(8, 8, 8);
+    g.fillStyle(0xb8860b, 0.9);
+    g.fillRect(7.2, 4, 1.6, 8);
+    g.generateTexture("tex-coin", 16, 16);
     g.destroy();
   }
 
@@ -847,18 +939,21 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnWorldItem(item) {
-    const sprite = this.add.image(item.x, item.y, "tex-item");
+    const isGold = !item.itemId && item.gold > 0;
+    const sprite = this.add.image(item.x, item.y, isGold ? "tex-coin" : "tex-item");
     sprite.setDepth(ITEM_DEPTH);
     if (item.itemId) sprite.setTint(0xff66aa); // 장비/물약
-    else if (item.gold > 0) sprite.setTint(0xffd700); // 골드
-    else sprite.setTint(0x66ccff); // XP 조각
+    else if (!isGold) sprite.setTint(0x66ccff); // XP 조각
     this.worldItemSprites.set(item.id, sprite);
   }
 
   // 상점은 이 위치 반경(SHOP_INTERACT_RADIUS) 안에 있을 때만 이용 가능하다(서버가 최종 검증).
+  // NPC와 마찬가지로 가까이에서 클릭하면 바로 열리게 인터랙티브로 등록한다(handleAttack에서 검사).
   spawnShopMarker(pos) {
     const tent = this.add.image(pos.x, pos.y, "tex-shop").setOrigin(0.5, 0.85);
     tent.setDepth(pos.y);
+    tent.setInteractive({ useHandCursor: true });
+    this.shopSprite = tent;
     this.add
       .text(pos.x, pos.y - TILE_SIZE * 1.6, "상점", { font: "12px monospace", fill: "#0b0b0d", backgroundColor: "#ffd700" })
       .setOrigin(0.5)
@@ -890,7 +985,11 @@ export default class GameScene extends Phaser.Scene {
 
     const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
 
-    // NPC를 클릭하면 공격 대신 대화창을 연다 - 가까이 있을 때만(멀리서 줌아웃해서 클릭하는 건 방지)
+    // 상점/NPC를 클릭하면 공격 대신 해당 UI를 연다 - 가까이 있을 때만(멀리서 줌아웃해서 클릭하는 건 방지)
+    if (this.shopSprite && this.shopNear && this.shopSprite.getBounds().contains(worldPoint.x, worldPoint.y)) {
+      toggleShop();
+      return;
+    }
     if (this.questNpcSprite && this.questNpcNear && this.questNpcSprite.getBounds().contains(worldPoint.x, worldPoint.y)) {
       this.talkToQuestNpc();
       return;

@@ -167,7 +167,7 @@ function blockedByObstacle(x, y) {
 //   ranged - 사거리 안에서 투사체를 던져서 거리를 둬도 안전하지 않게 함
 const MONSTER_TYPES = {
   slime: {
-    name: "슬라임",
+    name: "무당벌레",
     maxHp: 15,
     xp: 10,
     gold: 3,
@@ -180,7 +180,7 @@ const MONSTER_TYPES = {
     count: 12,
   },
   wolf: {
-    name: "늑대",
+    name: "장수풍뎅이",
     maxHp: 30,
     xp: 25,
     gold: 8,
@@ -193,7 +193,7 @@ const MONSTER_TYPES = {
     count: 10,
   },
   crab: {
-    name: "게",
+    name: "폭탄먼지벌레",
     maxHp: 45,
     xp: 40,
     gold: 15,

@@ -58,9 +58,13 @@
   #hud-top-row {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     font-size: 13px;
     letter-spacing: 0.5px;
   }
+
+  #gold-row { display: flex; align-items: center; gap: 4px; color: var(--accent); font-weight: 600; }
+  .coin-icon { display: block; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.5)); }
 
   .bar-track { height: 8px; background: #232328; border-radius: 4px; overflow: hidden; }
   .bar-fill { height: 100%; width: 0%; transition: width 0.2s ease; }
@@ -73,27 +77,33 @@
     padding-top: 8px;
     border-top: 1px solid var(--border);
   }
+  #quest-info.hidden { display: none; }
   #quest-label { font-size: 12px; margin-bottom: 4px; }
   #quest-fill { background: #c98bff; }
-  #quest-request-button {
-    margin-top: 4px;
-    padding: 6px 10px;
-    font-size: 12px;
-    width: 100%;
-  }
-  #quest-request-button.hidden { display: none; }
-  #quest-request-button.disabled { opacity: 0.4; cursor: not-allowed; }
-  #quest-hint { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-  #quest-hint.hidden { display: none; }
 
-  #shop-button {
-    margin-top: 4px;
-    padding: 6px 10px;
-    font-size: 12px;
+  /* ---- 상호작용 프롬프트 (상점/NPC 근처에서만 화면 중앙 하단에 표시) ---- */
+  #interact-prompt {
+    position: fixed;
+    bottom: 104px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(18, 18, 22, 0.88);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 7px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    z-index: 15;
+    pointer-events: none;
+    animation: prompt-pulse 1.6s ease-in-out infinite;
   }
-  #shop-button.disabled { opacity: 0.4; cursor: not-allowed; }
-  #shop-hint { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-  #shop-hint.hidden { display: none; }
+  #interact-prompt.hidden { display: none; }
+  @keyframes prompt-pulse {
+    0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.88; }
+    50% { transform: translateX(-50%) scale(1.05); opacity: 1; }
+  }
 
   /* ---- 어드민(베타 디버그) 버튼 (우하단) ---- */
   #admin-button {
@@ -260,20 +270,24 @@
   <div id="hud">
     <div id="hud-top-row">
       <span id="level-text">Lv.1</span>
-      <span id="gold-text">0</span>
+      <span id="gold-row">
+        <svg class="coin-icon" viewBox="0 0 16 16" width="14" height="14">
+          <circle cx="8" cy="8" r="7" fill="#ffd700" stroke="#b8860b" stroke-width="1"/>
+          <circle cx="8" cy="8" r="4.3" fill="#ffe999"/>
+        </svg>
+        <span id="gold-text">0</span>
+      </span>
     </div>
     <div class="bar-track"><div id="hp-fill" class="bar-fill"></div></div>
     <div id="hp-text">20 / 20</div>
     <div class="bar-track"><div id="xp-fill" class="bar-fill"></div></div>
-    <button id="shop-button">상점 열기</button>
-    <div id="shop-hint">상점에 가까이 가야 이용할 수 있어요</div>
-    <div id="quest-info">
+    <div id="quest-info" class="hidden">
       <div id="quest-label">퀘스트: 없음</div>
       <div class="bar-track"><div id="quest-fill" class="bar-fill"></div></div>
-      <button id="quest-request-button">퀘스트 받기</button>
-      <div id="quest-hint">퀘스트 담당자에게 가까이 가야 받을 수 있어요</div>
     </div>
   </div>
+
+  <div id="interact-prompt" class="hidden"></div>
 
   <button id="admin-button">⚙ 관리자 (베타)</button>
 
@@ -306,7 +320,16 @@
       <span>상점</span>
       <button class="modal-close" data-close="shop">닫기</button>
     </div>
-    <div id="shop-gold-line">보유 골드: <span id="shop-gold-amount">0</span></div>
+    <div id="shop-gold-line">
+      보유 골드:
+      <span id="gold-row">
+        <svg class="coin-icon" viewBox="0 0 16 16" width="13" height="13">
+          <circle cx="8" cy="8" r="7" fill="#ffd700" stroke="#b8860b" stroke-width="1"/>
+          <circle cx="8" cy="8" r="4.3" fill="#ffe999"/>
+        </svg>
+        <span id="shop-gold-amount">0</span>
+      </span>
+    </div>
     <div id="shop-buy-grid" class="slot-grid"></div>
     <div class="modal-subheader">내 아이템 판매 (클릭 시 1개 판매)</div>
     <div id="shop-sell-grid" class="slot-grid"></div>

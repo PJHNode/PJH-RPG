@@ -3,7 +3,7 @@ import { ITEMS } from "./items.js";
 const HOTBAR_SIZE = 5;
 
 // server/index.js의 MONSTER_TYPES 이름과 맞춰둘 것 (퀘스트 문구 표시용)
-const MONSTER_NAMES = { slime: "슬라임", wolf: "늑대", crab: "게" };
+const MONSTER_NAMES = { slime: "무당벌레", wolf: "장수풍뎅이", crab: "폭탄먼지벌레" };
 
 // ---- HUD ----
 const hpFill = document.getElementById("hp-fill");
@@ -11,10 +11,9 @@ const hpText = document.getElementById("hp-text");
 const xpFill = document.getElementById("xp-fill");
 const levelText = document.getElementById("level-text");
 const goldText = document.getElementById("gold-text");
+const questInfoEl = document.getElementById("quest-info");
 const questLabelEl = document.getElementById("quest-label");
 const questFillEl = document.getElementById("quest-fill");
-const questRequestButton = document.getElementById("quest-request-button");
-const questHintEl = document.getElementById("quest-hint");
 
 // ---- 핫바 / 장착 ----
 const hotbarEl = document.getElementById("hotbar");
@@ -27,8 +26,6 @@ const inventoryGridEl = document.getElementById("inventory-grid");
 const inventoryEquipRowEl = document.getElementById("inventory-equip-row");
 
 // ---- 상점 ----
-const shopButton = document.getElementById("shop-button");
-const shopHintEl = document.getElementById("shop-hint");
 const shopModal = document.getElementById("shop-modal");
 const shopGoldAmountEl = document.getElementById("shop-gold-amount");
 const shopBuyGridEl = document.getElementById("shop-buy-grid");
@@ -47,6 +44,7 @@ const adminLevelInput = document.getElementById("admin-level-input");
 // ---- 공통 ----
 const backdrop = document.getElementById("modal-backdrop");
 const toastEl = document.getElementById("toast");
+const interactPromptEl = document.getElementById("interact-prompt");
 
 let activeModal = null; // 'inventory' | 'shop' | 'admin' | null
 let currentCharacter = null;
@@ -56,22 +54,6 @@ let uiHandlers = {};
 
 export function initUI(handlers) {
   uiHandlers = handlers;
-
-  shopButton.addEventListener("click", () => {
-    if (!shopNear) {
-      showToast("상점에 가까이 가야 이용할 수 있어요");
-      return;
-    }
-    toggleShop();
-  });
-
-  questRequestButton.addEventListener("click", () => {
-    if (!questNpcNear) {
-      showToast("퀘스트 담당자에게 가까이 가야 받을 수 있어요");
-      return;
-    }
-    toggleNpcDialogue();
-  });
 
   npcAcceptButton.addEventListener("click", () => {
     uiHandlers.onRequestQuest?.();
@@ -91,10 +73,15 @@ export function initUI(handlers) {
   });
   backdrop.addEventListener("click", () => closeModals());
 
+  // E: 상점/NPC 근처면 바로 그걸 열고(월드 오브젝트 클릭과 동일한 동작), 아무것도 없으면
+  // 인벤토리를 토글한다. 모달이 이미 열려 있으면 그걸 닫는다(Escape와 동일하게 동작).
   window.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() === "e") {
       e.preventDefault();
-      toggleInventory();
+      if (activeModal) closeModals();
+      else if (shopNear) toggleShop();
+      else if (questNpcNear) toggleNpcDialogue();
+      else toggleInventory();
     } else if (e.key === "Escape") {
       closeModals();
     }
@@ -113,6 +100,7 @@ function setActiveModal(name) {
   adminModal.classList.toggle("hidden", name !== "admin");
   backdrop.classList.toggle("hidden", name === null);
   uiHandlers.onMenuOpenChange?.(name);
+  updateInteractPrompt();
 
   if (name && currentCharacter) {
     if (name === "inventory") renderInventoryModal(currentCharacter);
@@ -162,14 +150,30 @@ export function getActiveModal() {
   return activeModal;
 }
 
-// 상점 반경 안/밖으로 넘어갈 때 GameScene이 호출. 버튼 활성화 + 힌트 문구 + 밖으로
+// 화면 하단 중앙에 뜨는 "E / 클릭 - ..." 프롬프트를 근접 상태에 맞게 갱신한다.
+// 인벤토리처럼 상점/NPC와 무관한 모달이 열려 있을 때는 굳이 보일 필요가 없어 숨긴다.
+function updateInteractPrompt() {
+  if (activeModal) {
+    interactPromptEl.classList.add("hidden");
+    return;
+  }
+  if (shopNear) {
+    interactPromptEl.textContent = "E 또는 클릭 - 상점 열기";
+    interactPromptEl.classList.remove("hidden");
+  } else if (questNpcNear) {
+    interactPromptEl.textContent = "E 또는 클릭 - 대화하기";
+    interactPromptEl.classList.remove("hidden");
+  } else {
+    interactPromptEl.classList.add("hidden");
+  }
+}
+
+// 상점 반경 안/밖으로 넘어갈 때 GameScene이 호출. 프롬프트 갱신 + 밖으로
 // 나가면 상점 모달을 자동으로 닫는다(서버도 어차피 거리 검증을 하지만 UX상 자연스럽게).
 export function updateShopProximity(isNear) {
   if (isNear === shopNear) return;
   shopNear = isNear;
-
-  shopButton.classList.toggle("disabled", !isNear);
-  shopHintEl.classList.toggle("hidden", isNear);
+  updateInteractPrompt();
 
   if (!isNear && activeModal === "shop") {
     closeModals();
@@ -181,9 +185,7 @@ export function updateShopProximity(isNear) {
 export function updateQuestNpcProximity(isNear) {
   if (isNear === questNpcNear) return;
   questNpcNear = isNear;
-
-  questRequestButton.classList.toggle("disabled", !isNear);
-  questHintEl.classList.toggle("hidden", isNear);
+  updateInteractPrompt();
 }
 
 // character가 바뀔 때마다(이동 제외 전부) GameScene이 호출하는 단일 진입점
@@ -206,14 +208,8 @@ export function renderCharacter(character, xpToNext) {
 }
 
 function renderQuest(quest) {
-  questRequestButton.classList.toggle("hidden", !!quest);
-  questHintEl.classList.toggle("hidden", !!quest || questNpcNear);
-
-  if (!quest) {
-    questLabelEl.textContent = "퀘스트: 없음";
-    questFillEl.style.width = "0%";
-    return;
-  }
+  questInfoEl.classList.toggle("hidden", !quest);
+  if (!quest) return;
 
   const name = MONSTER_NAMES[quest.monsterType] ?? quest.monsterType;
   questLabelEl.textContent = `퀘스트: ${name} 처치 ${quest.progress}/${quest.target}`;
