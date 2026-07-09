@@ -120,6 +120,11 @@
   #admin-field button { padding: 5px 10px; font-size: 12px; }
   #admin-note { font-size: 11px; color: var(--text-dim); }
 
+  /* ---- 퀘스트 NPC 대화창 ---- */
+  #npc-dialogue-text { font-size: 13px; line-height: 1.5; margin: 0; }
+  #npc-accept-button { padding: 8px 12px; font-size: 13px; align-self: flex-start; }
+  #npc-accept-button.hidden { display: none; }
+
   /* ---- 미니맵 (우상단) ---- */
   #minimap-panel {
     position: fixed;
@@ -305,6 +310,15 @@
     <div id="shop-buy-grid" class="slot-grid"></div>
     <div class="modal-subheader">내 아이템 판매 (클릭 시 1개 판매)</div>
     <div id="shop-sell-grid" class="slot-grid"></div>
+  </div>
+
+  <div id="npc-modal" class="modal-box hidden">
+    <div class="modal-header">
+      <span>퀘스트 담당자</span>
+      <button class="modal-close" data-close="npc">닫기</button>
+    </div>
+    <p id="npc-dialogue-text">...</p>
+    <button id="npc-accept-button">수락</button>
   </div>
 
   <div id="admin-modal" class="modal-box hidden">

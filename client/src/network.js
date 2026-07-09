@@ -22,6 +22,8 @@ export default class Network {
     this.socket.on("monsterDied", (data) => handlers.onMonsterDied?.(data));
     this.socket.on("monstersUpdated", (data) => handlers.onMonstersUpdated?.(data));
     this.socket.on("monsterAttack", (data) => handlers.onMonsterAttack?.(data));
+    this.socket.on("monsterProjectileCreated", (data) => handlers.onMonsterProjectileCreated?.(data));
+    this.socket.on("monsterProjectileRemoved", (data) => handlers.onMonsterProjectileRemoved?.(data));
 
     this.socket.on("itemSpawned", (data) => handlers.onItemSpawned?.(data));
     this.socket.on("itemRemoved", (data) => handlers.onItemRemoved?.(data));

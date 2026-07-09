@@ -162,21 +162,60 @@ function blockedByObstacle(x, y) {
 
 // ---- 몬스터 ----
 // 섬 중심에서의 거리로 스폰 지역을 나눠, 마을에서 멀어질수록 강한 몬스터가 나오게 한다.
+// attackType으로 공격 방식을 나눠서 몬스터마다 다르게 위협을 준다:
+//   melee  - 붙어야만 때리는 접촉 데미지 (contactRadius 안)
+//   ranged - 사거리 안에서 투사체를 던져서 거리를 둬도 안전하지 않게 함
 const MONSTER_TYPES = {
-  slime: { name: "슬라임", maxHp: 15, xp: 10, gold: 3, speed: 40, damage: 2, minRadius: 0, maxRadius: 25, count: 12 },
-  wolf: { name: "늑대", maxHp: 30, xp: 25, gold: 8, speed: 70, damage: 4, minRadius: 25, maxRadius: 45, count: 10 },
-  crab: { name: "게", maxHp: 45, xp: 40, gold: 15, speed: 30, damage: 6, minRadius: 45, maxRadius: ISLAND_RADIUS, count: 8 },
+  slime: {
+    name: "슬라임",
+    maxHp: 15,
+    xp: 10,
+    gold: 3,
+    speed: 40,
+    damage: 2,
+    attackType: "melee",
+    contactRadius: 22,
+    minRadius: 0,
+    maxRadius: 25,
+    count: 12,
+  },
+  wolf: {
+    name: "늑대",
+    maxHp: 30,
+    xp: 25,
+    gold: 8,
+    speed: 70,
+    damage: 4,
+    attackType: "melee",
+    contactRadius: 30, // 슬라임보다 리치가 길어서 "달려들어 무는" 느낌
+    minRadius: 25,
+    maxRadius: 45,
+    count: 10,
+  },
+  crab: {
+    name: "게",
+    maxHp: 45,
+    xp: 40,
+    gold: 15,
+    speed: 30,
+    damage: 6,
+    attackType: "ranged",
+    rangedRange: 180,
+    projectileSpeed: 260,
+    minRadius: 45,
+    maxRadius: ISLAND_RADIUS,
+    count: 8,
+  },
 };
 const MONSTER_WANDER_RADIUS = 150;
 const MONSTER_RESPAWN_MS = 10000;
+const MONSTER_ATTACK_COOLDOWN_MS = 1400; // 접촉/원거리 공통, 몬스터별로 따로 추적
 
 // 몬스터 어그로: 이 반경 안에 들어오면 배회 대신 그 플레이어를 쫓아간다.
 // 추격 해제 반경을 더 넓게 잡아서(히스테리시스) 경계선에서 어그로가 깜빡이지 않게 함.
 const AGGRO_RADIUS = 110;
 const DEAGGRO_RADIUS = 220;
 
-// 몬스터 접촉 데미지: 이 거리 안에 있으면 일정 주기로 플레이어를 때린다.
-const CONTACT_RADIUS = 22;
 const PLAYER_HIT_COOLDOWN_MS = 800;
 const PLAYER_RESPAWN_INVULN_MS = 1500;
 
@@ -200,6 +239,7 @@ function spawnMonster(type) {
     targetY: spawn.y,
     nextWanderAt: 0,
     aggroId: null,
+    lastAttackAt: 0,
   };
   return monsters[id];
 }
@@ -251,6 +291,79 @@ function damageMonster(monsterId, amount, attackerId) {
 const ARROW_HIT_RADIUS = 16;
 let arrowUid = 0;
 const arrows = {}; // id -> { id, ownerId, x, y, vx, vy, damage, expireAt }
+
+// ---- 몬스터 원거리 공격(게) ----
+// 플레이어 화살과 같은 방식: 발생 이벤트만 broadcast하고, 실제 명중은 서버 tick이 조용히 판정.
+const MONSTER_PROJECTILE_HIT_RADIUS = 18;
+const MONSTER_PROJECTILE_LIFETIME_MS = 1500;
+let monsterProjectileUid = 0;
+const monsterProjectiles = {}; // id -> { id, monsterId, x, y, vx, vy, damage, expireAt }
+
+// 몬스터가 어그로 중인 대상에게 공격 가능하면(타입별 사거리 안 + 쿨다운 종료) 공격한다.
+function attackIfReady(m, def, now) {
+  const target = players[m.aggroId];
+  if (!target) return;
+  if (now - m.lastAttackAt < MONSTER_ATTACK_COOLDOWN_MS) return;
+
+  const dist = Math.hypot(target.x - m.x, target.y - m.y);
+
+  if (def.attackType === "ranged") {
+    if (dist > def.rangedRange) return;
+    m.lastAttackAt = now;
+
+    const angle = Math.atan2(target.y - m.y, target.x - m.x);
+    const id = `mproj-${monsterProjectileUid++}`;
+    monsterProjectiles[id] = {
+      id,
+      monsterId: m.id,
+      x: m.x,
+      y: m.y,
+      vx: Math.cos(angle) * def.projectileSpeed,
+      vy: Math.sin(angle) * def.projectileSpeed,
+      damage: def.damage,
+      expireAt: now + MONSTER_PROJECTILE_LIFETIME_MS,
+    };
+    io.emit("monsterProjectileCreated", { id, x: m.x, y: m.y, angle, speed: def.projectileSpeed, monsterType: m.type });
+    io.emit("monsterAttack", { id: m.id }); // 맞았는지와 무관하게 "공격했다"는 연출은 항상 재생
+    return;
+  }
+
+  // melee
+  if (dist > def.contactRadius) return;
+  m.lastAttackAt = now;
+  damagePlayer(m.aggroId, def.damage, m.id);
+}
+
+function tickMonsterProjectiles() {
+  const now = Date.now();
+  const dt = TICK_MS / 1000;
+
+  Object.values(monsterProjectiles).forEach((p) => {
+    if (now > p.expireAt) {
+      delete monsterProjectiles[p.id];
+      return;
+    }
+
+    const prevX = p.x;
+    const prevY = p.y;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    if (blockedByObstacle(p.x, p.y)) {
+      delete monsterProjectiles[p.id];
+      io.emit("monsterProjectileRemoved", { id: p.id });
+      return;
+    }
+
+    for (const [socketId, player] of Object.entries(players)) {
+      if (distanceToSegment(player.x, player.y, prevX, prevY, p.x, p.y) > MONSTER_PROJECTILE_HIT_RADIUS) continue;
+      delete monsterProjectiles[p.id];
+      io.emit("monsterProjectileRemoved", { id: p.id });
+      damagePlayer(socketId, p.damage, p.monsterId);
+      break;
+    }
+  });
+}
 
 // ---- 근접 공격 ----
 const MELEE_RANGE = 46;
@@ -316,10 +429,7 @@ function tickMonsters() {
     }
 
     if (m.aggroId) {
-      const target = players[m.aggroId];
-      if (target && Math.hypot(target.x - m.x, target.y - m.y) <= CONTACT_RADIUS) {
-        damagePlayer(m.aggroId, def.damage, m.id);
-      }
+      attackIfReady(m, def, now);
     }
   });
 
@@ -381,6 +491,7 @@ function tickArrows() {
 setInterval(() => {
   tickMonsters();
   tickArrows();
+  tickMonsterProjectiles();
 }, TICK_MS);
 
 // ---- 플레이어 ----

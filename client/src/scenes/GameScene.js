@@ -3,6 +3,7 @@ import {
   PLAYER_SPEED,
   ARROW_SPEED,
   ARROW_LIFETIME_MS,
+  MONSTER_PROJECTILE_LIFETIME_MS,
   MOVE_SEND_INTERVAL_MS,
   LEVEL_REQUIRED_FOR_SEA,
   WATER_SPEED_MULTIPLIER,
@@ -13,7 +14,14 @@ import Network from "../network.js";
 import { loadCharacter, saveCharacter } from "../storage.js";
 import { xpToReachLevel, MAX_LEVEL } from "../leveling.js";
 import { ITEMS } from "../items.js";
-import { initUI, renderCharacter, showToast, updateShopProximity, updateQuestNpcProximity } from "../ui.js";
+import {
+  initUI,
+  renderCharacter,
+  showToast,
+  updateShopProximity,
+  updateQuestNpcProximity,
+  toggleNpcDialogue,
+} from "../ui.js";
 import { buildMinimapTerrain, renderMinimap } from "../minimap.js";
 import {
   unlockAudio,
@@ -59,6 +67,7 @@ export default class GameScene extends Phaser.Scene {
     this.localShadow = null;
     this.remotePlayers = new Map(); // id -> { sprite, shadow, label, target }
     this.arrows = new Map(); // arrowId -> { sprite, vx, vy, expireAt, trailTimer }
+    this.monsterProjectiles = new Map(); // id -> { sprite, vx, vy, expireAt }
     this.worldItemSprites = new Map(); // itemId -> sprite
     this.pickupRequested = new Set(); // 중복 pickupItem 전송 방지
     this.monsters = new Map(); // id -> { sprite, shadow, hpBg, hpFill, target, maxHp, lastHp }
@@ -71,6 +80,7 @@ export default class GameScene extends Phaser.Scene {
     this.shopNear = false;
     this.questNpcPosition = null;
     this.questNpcNear = false;
+    this.questNpcSprite = null;
   }
 
   preload() {
@@ -79,6 +89,7 @@ export default class GameScene extends Phaser.Scene {
       this.makeMonsterTexture(`tex-monster-${type}`, v.size, v.color);
     });
     this.makeArrowTexture();
+    this.makeMonsterProjectileTexture();
     this.makeSlashTexture();
     this.makeShadowTexture();
     this.makeCircleTexture("tex-item", 8, 0xffffff);
@@ -159,6 +170,19 @@ export default class GameScene extends Phaser.Scene {
     g.fillRect(0, 3, 15, 2);
     g.fillTriangle(13, 0, 13, 8, 20, 4);
     g.generateTexture("tex-arrow", 20, 8);
+    g.destroy();
+  }
+
+  // 게가 던지는 원거리 공격 투사체(거품/집게 덩어리) - 화살과 겉모습이 확실히 다르게
+  makeMonsterProjectileTexture() {
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.fillStyle(0x3aa06b, 1);
+    g.fillCircle(7, 7, 7);
+    g.fillStyle(0x7fe0a8, 0.7);
+    g.fillCircle(5, 5, 3);
+    g.lineStyle(1, 0x0b0b0d, 0.3);
+    g.strokeCircle(7, 7, 7);
+    g.generateTexture("tex-monster-projectile", 14, 14);
     g.destroy();
   }
 
@@ -482,6 +506,14 @@ export default class GameScene extends Phaser.Scene {
           this.arrows.delete(id);
         }
       },
+      onMonsterProjectileCreated: (data) => this.spawnMonsterProjectile(data),
+      onMonsterProjectileRemoved: ({ id }) => {
+        const p = this.monsterProjectiles.get(id);
+        if (p) {
+          p.sprite.destroy();
+          this.monsterProjectiles.delete(id);
+        }
+      },
       onMonsterSpawned: (m) => this.spawnMonster(m),
       onMonsterDamaged: ({ id, hp, maxHp }) => {
         const entry = this.monsters.get(id);
@@ -776,6 +808,18 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  spawnMonsterProjectile(data) {
+    const sprite = this.add.image(data.x, data.y, "tex-monster-projectile");
+    sprite.setDepth(TOP_DEPTH);
+
+    this.monsterProjectiles.set(data.id, {
+      sprite,
+      vx: Math.cos(data.angle) * data.speed,
+      vy: Math.sin(data.angle) * data.speed,
+      expireAt: this.time.now + MONSTER_PROJECTILE_LIFETIME_MS,
+    });
+  }
+
   playMeleeSwing(x, y, angle) {
     // 손잡이+가드+칼날 색이 이미 텍스처에 칠해져 있어서(브라운 손잡이, 은색 칼날) 여기서
     // setTint를 하면 색이 단색으로 뭉개지므로 원래 색 그대로 둔다.
@@ -825,6 +869,8 @@ export default class GameScene extends Phaser.Scene {
   spawnQuestNpcMarker(pos) {
     const npc = this.add.image(pos.x, pos.y, "tex-quest-npc").setOrigin(0.5, 0.95);
     npc.setDepth(pos.y);
+    npc.setInteractive({ useHandCursor: true }); // 클릭해서 말을 걸 수 있게(handleAttack에서 공격보다 먼저 검사)
+    this.questNpcSprite = npc;
     const shadow = this.add.image(pos.x, pos.y, "tex-shadow");
     shadow.setDepth(pos.y - 0.5);
 
@@ -841,10 +887,18 @@ export default class GameScene extends Phaser.Scene {
 
   handleAttack(pointer) {
     if (!this.localPlayer || !this.network || this.menuOpen) return;
+
+    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+
+    // NPC를 클릭하면 공격 대신 대화창을 연다 - 가까이 있을 때만(멀리서 줌아웃해서 클릭하는 건 방지)
+    if (this.questNpcSprite && this.questNpcNear && this.questNpcSprite.getBounds().contains(worldPoint.x, worldPoint.y)) {
+      this.talkToQuestNpc();
+      return;
+    }
+
     if (this.time.now - this.lastAttackTime < ATTACK_COOLDOWN_MS) return;
     this.lastAttackTime = this.time.now;
 
-    const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const angle = Phaser.Math.Angle.Between(this.localPlayer.x, this.localPlayer.y, worldPoint.x, worldPoint.y);
 
     const weaponId = this.character.equipped.weapon;
@@ -857,6 +911,10 @@ export default class GameScene extends Phaser.Scene {
       this.network.sendMeleeAttack(angle);
       playSwordSwingSound();
     }
+  }
+
+  talkToQuestNpc() {
+    toggleNpcDialogue();
   }
 
   // 숫자키 1~5: 핫바(인벤토리 앞 5칸)의 아이템을 클릭한 것과 똑같이 장착/사용한다.
@@ -889,6 +947,7 @@ export default class GameScene extends Phaser.Scene {
     this.interpolateRemotePlayers();
     this.interpolateMonsters();
     this.updateArrows(time, delta);
+    this.updateMonsterProjectiles(time, delta);
     this.updateMinimap();
     this.updateShopProximityCheck();
     this.updateQuestNpcProximityCheck();
@@ -1040,6 +1099,19 @@ export default class GameScene extends Phaser.Scene {
       if (time > arrow.expireAt) {
         arrow.sprite.destroy();
         this.arrows.delete(id);
+      }
+    });
+  }
+
+  updateMonsterProjectiles(time, delta) {
+    const dt = delta / 1000;
+    this.monsterProjectiles.forEach((p, id) => {
+      p.sprite.x += p.vx * dt;
+      p.sprite.y += p.vy * dt;
+
+      if (time > p.expireAt) {
+        p.sprite.destroy();
+        this.monsterProjectiles.delete(id);
       }
     });
   }

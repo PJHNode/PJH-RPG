@@ -34,6 +34,11 @@ const shopGoldAmountEl = document.getElementById("shop-gold-amount");
 const shopBuyGridEl = document.getElementById("shop-buy-grid");
 const shopSellGridEl = document.getElementById("shop-sell-grid");
 
+// ---- 퀘스트 NPC 대화 ----
+const npcModal = document.getElementById("npc-modal");
+const npcDialogueTextEl = document.getElementById("npc-dialogue-text");
+const npcAcceptButton = document.getElementById("npc-accept-button");
+
 // ---- 어드민(베타 디버그) 패널 ----
 const adminModal = document.getElementById("admin-modal");
 const adminGoldInput = document.getElementById("admin-gold-input");
@@ -65,7 +70,12 @@ export function initUI(handlers) {
       showToast("퀘스트 담당자에게 가까이 가야 받을 수 있어요");
       return;
     }
+    toggleNpcDialogue();
+  });
+
+  npcAcceptButton.addEventListener("click", () => {
     uiHandlers.onRequestQuest?.();
+    closeModals();
   });
 
   document.getElementById("admin-button").addEventListener("click", () => toggleAdmin());
@@ -99,6 +109,7 @@ function setActiveModal(name) {
   activeModal = name;
   inventoryModal.classList.toggle("hidden", name !== "inventory");
   shopModal.classList.toggle("hidden", name !== "shop");
+  npcModal.classList.toggle("hidden", name !== "npc");
   adminModal.classList.toggle("hidden", name !== "admin");
   backdrop.classList.toggle("hidden", name === null);
   uiHandlers.onMenuOpenChange?.(name);
@@ -106,6 +117,7 @@ function setActiveModal(name) {
   if (name && currentCharacter) {
     if (name === "inventory") renderInventoryModal(currentCharacter);
     if (name === "shop") renderShopModal(currentCharacter);
+    if (name === "npc") renderNpcDialogue(currentCharacter);
     if (name === "admin") {
       adminGoldInput.value = currentCharacter.gold;
       adminLevelInput.value = currentCharacter.level;
@@ -119,6 +131,23 @@ export function toggleInventory() {
 
 export function toggleShop() {
   setActiveModal(activeModal === "shop" ? null : "shop");
+}
+
+export function toggleNpcDialogue() {
+  setActiveModal(activeModal === "npc" ? null : "npc");
+}
+
+// 퀘스트가 없으면 새 퀘스트를 제안하고 수락 버튼을 보여주고, 이미 있으면 진행 상황만 알려준다.
+function renderNpcDialogue(character) {
+  if (!character.quest) {
+    npcDialogueTextEl.textContent = '"이 섬에 나타난 몬스터들 때문에 골치가 아프군. 자네가 좀 처치해주지 않겠나?"';
+    npcAcceptButton.classList.remove("hidden");
+    return;
+  }
+
+  const name = MONSTER_NAMES[character.quest.monsterType] ?? character.quest.monsterType;
+  npcDialogueTextEl.textContent = `"아직 ${name}을(를) ${character.quest.progress}/${character.quest.target}마리 처치했군. 마저 끝내고 오게!"`;
+  npcAcceptButton.classList.add("hidden");
 }
 
 export function toggleAdmin() {
