@@ -9,6 +9,11 @@ const {
   ARROW_LIFETIME_MS,
   SHOP_INTERACT_RADIUS,
   OBSTACLE_RADIUS,
+  DASH_COOLDOWN_MS,
+  DASH_INVULN_MS,
+  AOE_SKILL_RADIUS,
+  AOE_SKILL_COOLDOWN_MS,
+  AOE_SKILL_DAMAGE_MULTIPLIER,
 } = require("../shared/constants");
 const { generateIslandMap, isLandTile } = require("../shared/islandMap");
 const { ITEMS, INVENTORY_SIZE } = require("../shared/items");
@@ -551,6 +556,8 @@ function createDefaultCharacter() {
     quest: null, // NPC(퀘스트 담당자)에게 받아야 생김 - 접속하자마자 자동으로 주지 않음
     lastHitAt: 0,
     invulnerableUntil: 0,
+    lastDashAt: 0,
+    lastSkillAt: 0,
   };
 }
 
@@ -565,8 +572,13 @@ function damagePlayer(socketId, amount, monsterId) {
   if (now - player.lastHitAt < PLAYER_HIT_COOLDOWN_MS) return;
   player.lastHitAt = now;
 
-  player.hp = clamp(player.hp - amount, 0, player.maxHp);
-  io.emit("playerHit", { id: socketId, x: player.x, y: player.y, amount, hp: player.hp, maxHp: player.maxHp });
+  // 방어구의 defense 스탯만큼 데미지를 경감(최소 1은 들어가게 해서 방어구로 완전 무적이 되진 않음)
+  const armorDef = player.equipped.armor ? ITEMS[player.equipped.armor] : null;
+  const defense = armorDef?.stats?.defense ?? 0;
+  const finalAmount = Math.max(1, amount - defense);
+
+  player.hp = clamp(player.hp - finalAmount, 0, player.maxHp);
+  io.emit("playerHit", { id: socketId, x: player.x, y: player.y, amount: finalAmount, hp: player.hp, maxHp: player.maxHp });
   if (monsterId) io.emit("monsterAttack", { id: monsterId, targetId: socketId });
 
   if (player.hp <= 0) {
@@ -763,6 +775,41 @@ io.on("connection", (socket) => {
     };
 
     io.emit("arrowCreated", { id, x: player.x, y: player.y, angle: data.angle });
+  });
+
+  // 대시(회피): 이동 자체는 클라이언트가 처리하지만, 무적 시간은 서버가 authoritative하게 준다.
+  // 재사용대기시간도 서버가 다시 검증해서 dash 이벤트를 스팸으로 보내 무적을 계속 유지하는 걸 막는다.
+  socket.on("dash", () => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    const now = Date.now();
+    if (now - player.lastDashAt < DASH_COOLDOWN_MS) return;
+    player.lastDashAt = now;
+    player.invulnerableUntil = Math.max(player.invulnerableUntil, now + DASH_INVULN_MS);
+  });
+
+  // 논타겟팅 광역 스킬: 클릭으로 조준하지 않고 캐릭터 주변 반경 안의 모든 몬스터를 때린다.
+  // 근접 공격과 같은 무기 데미지를 쓰되, 광역이라 배율(AOE_SKILL_DAMAGE_MULTIPLIER)만큼 낮춘다.
+  socket.on("aoeAttack", () => {
+    const player = players[socket.id];
+    if (!player) return;
+
+    const now = Date.now();
+    if (now - player.lastSkillAt < AOE_SKILL_COOLDOWN_MS) return;
+    player.lastSkillAt = now;
+
+    const weaponDef = player.equipped.weapon ? ITEMS[player.equipped.weapon] : null;
+    const baseDamage = weaponDef?.stats?.damage ?? 1;
+    const damage = Math.max(1, Math.round(baseDamage * AOE_SKILL_DAMAGE_MULTIPLIER));
+
+    io.emit("aoeAttack", { id: socket.id, x: player.x, y: player.y });
+
+    Object.values(monsters).forEach((m) => {
+      const dist = Math.hypot(m.x - player.x, m.y - player.y);
+      if (dist > AOE_SKILL_RADIUS) return;
+      damageMonster(m.id, damage, socket.id);
+    });
   });
 
   socket.on("pickupItem", (data) => {

@@ -22,6 +22,7 @@ export default class Network {
     this.socket.on("monsterDied", (data) => handlers.onMonsterDied?.(data));
     this.socket.on("monstersUpdated", (data) => handlers.onMonstersUpdated?.(data));
     this.socket.on("monsterAttack", (data) => handlers.onMonsterAttack?.(data));
+    this.socket.on("aoeAttack", (data) => handlers.onAoeAttack?.(data));
     this.socket.on("monsterProjectileCreated", (data) => handlers.onMonsterProjectileCreated?.(data));
     this.socket.on("monsterProjectileRemoved", (data) => handlers.onMonsterProjectileRemoved?.(data));
 
@@ -49,6 +50,14 @@ export default class Network {
 
   sendRangedAttack(angle) {
     this.socket.emit("rangedAttack", { angle });
+  }
+
+  sendDash() {
+    this.socket.emit("dash");
+  }
+
+  sendAoeAttack() {
+    this.socket.emit("aoeAttack");
   }
 
   loadCharacter(character) {

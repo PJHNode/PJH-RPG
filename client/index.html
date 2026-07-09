@@ -164,6 +164,28 @@
   #hotbar { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
   #menu-hint { font-size: 11px; color: var(--text-dim); }
 
+  /* ---- 대시/광역 스킬 쿨다운 아이콘 ---- */
+  #ability-row { display: flex; gap: 8px; }
+  .ability-icon {
+    position: relative;
+    width: 36px; height: 36px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #1c1c20;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .ability-key {
+    position: absolute; bottom: 1px; right: 3px;
+    font-size: 8px; color: var(--text-dim);
+  }
+  .ability-cooldown-overlay {
+    position: absolute; inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    transform: scaleY(0);
+    transform-origin: bottom;
+    pointer-events: none;
+  }
+
   /* ---- 슬롯 공통 ---- */
   .inv-slot {
     width: 36px; height: 36px;
@@ -296,12 +318,27 @@
   </div>
 
   <div id="hotbar-panel">
+    <div id="ability-row">
+      <div class="ability-icon" id="dash-icon" title="대시/회피 (Space)">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M13 2 3 14h7l-1 8 10-12h-7z" fill="#7fe0ff"/></svg>
+        <span class="ability-key">Space</span>
+        <div class="ability-cooldown-overlay"></div>
+      </div>
+      <div class="ability-icon" id="skill-icon" title="광역 스킬 (Q)">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <circle cx="12" cy="12" r="4" fill="#ff9a4d"/>
+          <g stroke="#ff9a4d" stroke-width="2"><line x1="12" y1="1" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="23"/><line x1="1" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="23" y2="12"/></g>
+        </svg>
+        <span class="ability-key">Q</span>
+        <div class="ability-cooldown-overlay"></div>
+      </div>
+    </div>
     <div id="equip-row">
       <span id="equip-weapon">무기 없음</span>
       <span id="equip-armor">방어구 없음</span>
     </div>
     <div id="hotbar"></div>
-    <div id="menu-hint">인벤토리 열기: E · 핫바 장착/사용: 1~5</div>
+    <div id="menu-hint">인벤토리 열기: E · 핫바 장착/사용: 1~5 · 대시: Space · 광역 스킬: Q</div>
   </div>
 
   <div id="modal-backdrop" class="hidden"></div>

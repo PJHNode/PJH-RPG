@@ -9,6 +9,11 @@ import {
   WATER_SPEED_MULTIPLIER,
   SHOP_INTERACT_RADIUS,
   TILE_TYPES,
+  DASH_SPEED_MULTIPLIER,
+  DASH_DURATION_MS,
+  DASH_COOLDOWN_MS,
+  AOE_SKILL_RADIUS,
+  AOE_SKILL_COOLDOWN_MS,
 } from "../config.js";
 import Network from "../network.js";
 import { loadCharacter, saveCharacter } from "../storage.js";
@@ -22,6 +27,7 @@ import {
   updateQuestNpcProximity,
   toggleNpcDialogue,
   toggleShop,
+  updateAbilityCooldowns,
 } from "../ui.js";
 import { buildMinimapTerrain, renderMinimap } from "../minimap.js";
 import {
@@ -31,6 +37,8 @@ import {
   playHitSound,
   playPickupSound,
   playLevelUpSound,
+  playDashSound,
+  playAoeSkillSound,
 } from "../sound.js";
 
 const TILE_COLORS = {
@@ -85,6 +93,14 @@ export default class GameScene extends Phaser.Scene {
     this.questNpcPosition = null;
     this.questNpcNear = false;
     this.questNpcSprite = null;
+    this.dashCooldownUntil = 0;
+    this.dashActiveUntil = 0;
+    this.dashDirX = 0;
+    this.dashDirY = 0;
+    this.dashTrailTimer = 0;
+    this.skillCooldownUntil = 0;
+    this.hasteMultiplier = 1;
+    this.hasteUntil = 0;
   }
 
   preload() {
@@ -98,6 +114,7 @@ export default class GameScene extends Phaser.Scene {
     this.makeShadowTexture();
     this.makeCircleTexture("tex-item", 8, 0xffffff);
     this.makeCoinTexture();
+    this.makeAoeRingTexture();
     this.makeObstacleTextures();
     this.makeShopTexture();
     this.makeQuestNpcTexture();
@@ -113,60 +130,56 @@ export default class GameScene extends Phaser.Scene {
     g.destroy();
   }
 
-  // 플레이어: 통통한 배(abdomen) + 가슴(thorax) + 머리로 이어지는 귀여운 벌레 실루엣.
+  // 플레이어: 다리 하나하나가 보이면 징그럽다는 피드백을 받아 다리를 완전히 없애고,
+  // 몸통+머리를 하나로 이어지는 둥근 블롭 + 크고 동그란 눈(사슴눈 스타일)으로 다시 그렸다.
   // 회전(rotation=0)일 때 머리가 오른쪽(+x)을 향하게 그려서, 캐릭터 회전이 곧 "바라보는 방향"이
   // 눈에 보이게 만든다(원은 회전해도 겉보기 변화가 없어서 조준 방향을 알 수 없었음).
-  // 몸통은 흰색으로 그려서 setTint(플레이어 색상)로 색을 입히고, 더듬이/다리/눈은 진한 색이라
+  // 몸통은 흰색으로 그려서 setTint(플레이어 색상)로 색을 입히고, 더듬이/눈은 진한 색이라
   // 틴트해도 거의 그대로 보인다.
   makeCharacterTexture(key, size) {
     const cx = size / 2;
     const cy = size / 2;
-    const abdomenCx = cx - size * 0.08;
-    const abdomenRx = size * 0.33;
-    const abdomenRy = size * 0.27;
-    const thoraxCx = cx + size * 0.1;
-    const thoraxR = size * 0.17;
-    const headCx = cx + size * 0.32;
-    const headR = size * 0.15;
+    const bodyRx = size * 0.36;
+    const bodyRy = size * 0.32;
+    const headR = size * 0.2;
+    const headCx = cx + bodyRx * 0.72;
 
     const g = this.make.graphics({ x: 0, y: 0, add: false });
 
-    // 다리 - 몸통 위/아래로 짧게 뻗어 걷는 벌레 느낌을 준다
-    g.lineStyle(1.6, 0x2a1a10, 0.55);
-    [-0.55, 0, 0.55].forEach((t) => {
-      const lx = abdomenCx + t * abdomenRx * 0.9;
-      g.lineBetween(lx, cy + abdomenRy * 0.55, lx - 2, cy + abdomenRy * 0.95 + Math.abs(t) * 2);
-      g.lineBetween(lx, cy - abdomenRy * 0.55, lx - 2, cy - abdomenRy * 0.95 - Math.abs(t) * 2);
-    });
+    // 더듬이 - 끝이 둥근 짧고 통통한 곡선(딱딱한 직선 다리 대신이라 훨씬 부드러워 보인다)
+    g.lineStyle(2, 0x1a1a1a, 0.55);
+    g.lineBetween(headCx + headR * 0.5, cy - headR * 0.6, headCx + headR * 0.9, cy - headR * 1.7);
+    g.lineBetween(headCx + headR * 0.5, cy + headR * 0.6, headCx + headR * 0.9, cy + headR * 1.7);
+    g.fillStyle(0x1a1a1a, 0.55);
+    g.fillCircle(headCx + headR * 0.9, cy - headR * 1.7, 1.4);
+    g.fillCircle(headCx + headR * 0.9, cy + headR * 1.7, 1.4);
 
-    // 더듬이 (텍스처 캔버스 폭이 size라서 팁이 밖으로 잘리지 않도록 x는 짧게, y로 길게 뻗는다)
-    g.lineStyle(1.6, 0x1a1a1a, 0.7);
-    g.lineBetween(headCx + headR * 0.6, cy - headR * 0.5, headCx + headR * 0.95, cy - headR * 1.9);
-    g.lineBetween(headCx + headR * 0.6, cy + headR * 0.5, headCx + headR * 0.95, cy + headR * 1.9);
-    g.fillStyle(0x1a1a1a, 0.7);
-    g.fillCircle(headCx + headR * 0.95, cy - headR * 1.9, 1);
-    g.fillCircle(headCx + headR * 0.95, cy + headR * 1.9, 1);
-
-    // 배 -> 가슴 -> 머리 순서로 겹쳐 그려 통통한 벌레 몸통을 만든다
+    // 몸통과 머리를 하나로 이어지는 둥근 블롭 - 다리 없이 통통한 실루엣만으로 귀여움을 표현
     g.fillStyle(0xffffff, 1);
-    g.fillEllipse(abdomenCx, cy, abdomenRx * 2, abdomenRy * 2);
-    g.fillCircle(thoraxCx, cy, thoraxR);
+    g.fillEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
     g.fillCircle(headCx, cy, headR);
-
-    g.lineStyle(1.6, 0x000000, 0.3);
-    g.strokeEllipse(abdomenCx, cy, abdomenRx * 2, abdomenRy * 2);
+    g.lineStyle(1.6, 0x000000, 0.28);
+    g.strokeEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
     g.strokeCircle(headCx, cy, headR);
 
-    // 딱지날개가 갈라진 것처럼 보이는 등선 + 광택(하이라이트)으로 반질반질한 껍질 느낌
-    g.lineStyle(1.2, 0x000000, 0.25);
-    g.lineBetween(abdomenCx - abdomenRx * 0.75, cy, thoraxCx, cy);
-    g.fillStyle(0xffffff, 0.35);
-    g.fillEllipse(abdomenCx - abdomenRx * 0.25, cy - abdomenRy * 0.4, abdomenRx * 0.7, abdomenRy * 0.35);
+    // 등선 + 광택(하이라이트)으로 반질반질한 껍질 느낌
+    g.lineStyle(1.2, 0x000000, 0.2);
+    g.lineBetween(cx - bodyRx * 0.7, cy, headCx - headR * 0.3, cy);
+    g.fillStyle(0xffffff, 0.4);
+    g.fillEllipse(cx - bodyRx * 0.3, cy - bodyRy * 0.42, bodyRx * 0.75, bodyRy * 0.4);
 
-    // 눈
-    g.fillStyle(0x000000, 0.75);
-    g.fillCircle(headCx + headR * 0.3, cy - headR * 0.45, 1.8);
-    g.fillCircle(headCx + headR * 0.3, cy + headR * 0.45, 1.8);
+    // 크고 동그란 눈(흰자+검은 눈동자+작은 하이라이트) - 귀여움의 핵심 포인트
+    const eyeR = headR * 0.42;
+    const eyeCx = headCx + headR * 0.25;
+    [-1, 1].forEach((dir) => {
+      const eyeCy = cy + dir * headR * 0.4;
+      g.fillStyle(0xffffff, 0.95);
+      g.fillCircle(eyeCx, eyeCy, eyeR);
+      g.fillStyle(0x1a1a1a, 1);
+      g.fillCircle(eyeCx + eyeR * 0.25, eyeCy, eyeR * 0.55);
+      g.fillStyle(0xffffff, 0.9);
+      g.fillCircle(eyeCx + eyeR * 0.4, eyeCy - eyeR * 0.35, eyeR * 0.22);
+    });
 
     g.generateTexture(key, size, size);
     g.destroy();
@@ -174,66 +187,67 @@ export default class GameScene extends Phaser.Scene {
 
   // 몬스터: 종류별로 실루엣이 다른 곤충(무당벌레/장수풍뎅이/폭탄먼지벌레)으로 그린다.
   // visual = { kind, color, spotColor, size } (MONSTER_VISUALS 참고)
+  // 예전엔 몸통에 다리를 선으로 하나하나 그려서 "귀엽다기보다 징그럽다"는 피드백을 받았다.
+  // 다리는 완전히 빼고, 대신 크고 동그란 눈(플레이어와 같은 스타일)을 넣어 귀여움을 살렸다.
   makeMonsterTexture(key, visual) {
     const { size, color, spotColor, kind } = visual;
     const cx = size / 2;
     const cy = size / 2;
-    const bodyRx = size * 0.36;
-    const bodyRy = size * 0.3;
+    const bodyRx = size * 0.38;
+    const bodyRy = size * 0.32;
 
     const g = this.make.graphics({ x: 0, y: 0, add: false });
 
-    // 공통 베이스: 짧은 다리 6개
-    g.lineStyle(1.4, 0x000000, 0.35);
-    [-0.5, 0, 0.5].forEach((t) => {
-      const lx = cx + t * bodyRx;
-      g.lineBetween(lx, cy + bodyRy * 0.6, lx, cy + bodyRy + 3);
-      g.lineBetween(lx, cy - bodyRy * 0.6, lx, cy - bodyRy - 3);
-    });
+    const drawCuteEyes = (ex, ey, r) => {
+      [-1, 1].forEach((dir) => {
+        const eyeCy = ey + dir * r * 1.05;
+        g.fillStyle(0xffffff, 0.95);
+        g.fillCircle(ex, eyeCy, r);
+        g.fillStyle(0x1a1a1a, 1);
+        g.fillCircle(ex + r * 0.25, eyeCy, r * 0.55);
+        g.fillStyle(0xffffff, 0.9);
+        g.fillCircle(ex + r * 0.4, eyeCy - r * 0.35, r * 0.22);
+      });
+    };
 
     if (kind === "ladybug") {
       // 둥근 몸 + 검은 머리 + 등에 점무늬가 있는 무당벌레
       g.fillStyle(color, 1);
       g.fillEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
-      g.lineStyle(1.4, 0x000000, 0.4);
+      g.lineStyle(1.4, 0x000000, 0.35);
       g.lineBetween(cx, cy - bodyRy, cx, cy + bodyRy);
       g.strokeEllipse(cx, cy, bodyRx * 2, bodyRy * 2);
       g.fillStyle(0x1a1a1a, 1);
-      g.fillCircle(cx - bodyRx * 0.85, cy, bodyRy * 0.55);
+      g.fillCircle(cx - bodyRx * 0.8, cy, bodyRy * 0.6);
       g.fillStyle(spotColor, 1);
-      g.fillCircle(cx + bodyRx * 0.35, cy - bodyRy * 0.4, size * 0.06);
-      g.fillCircle(cx + bodyRx * 0.35, cy + bodyRy * 0.4, size * 0.06);
-      g.fillCircle(cx + bodyRx * 0.85, cy, size * 0.06);
-      g.fillStyle(0xffffff, 0.9);
-      g.fillCircle(cx - bodyRx * 1.05, cy - bodyRy * 0.25, 1.6);
-      g.fillCircle(cx - bodyRx * 1.05, cy + bodyRy * 0.25, 1.6);
+      g.fillCircle(cx + bodyRx * 0.3, cy - bodyRy * 0.4, size * 0.06);
+      g.fillCircle(cx + bodyRx * 0.3, cy + bodyRy * 0.4, size * 0.06);
+      g.fillCircle(cx + bodyRx * 0.8, cy, size * 0.06);
+      drawCuteEyes(cx - bodyRx * 0.82, cy, bodyRy * 0.26);
     } else if (kind === "stagBeetle") {
-      // 크고 각진 몸 + 앞으로 뻗은 큰 집게뿔을 가진 장수풍뎅이
+      // 크고 둥근 몸 + 작고 동그란 혹뿔 두 개를 가진 장수풍뎅이(집게 대신 뭉툭하게 순화)
       g.fillStyle(color, 1);
       g.fillEllipse(cx, cy, bodyRx * 2, bodyRy * 1.9);
-      g.lineStyle(1.6, 0x000000, 0.4);
+      g.lineStyle(1.6, 0x000000, 0.35);
       g.strokeEllipse(cx, cy, bodyRx * 2, bodyRy * 1.9);
       g.fillStyle(spotColor, 1);
-      g.fillCircle(cx - bodyRx * 0.9, cy, bodyRy * 0.5);
-      g.lineStyle(2.2, spotColor, 1);
-      g.lineBetween(cx - bodyRx * 1.1, cy - 3, cx - bodyRx * 1.35, cy - bodyRy * 0.75);
-      g.lineBetween(cx - bodyRx * 1.1, cy + 3, cx - bodyRx * 1.35, cy + bodyRy * 0.75);
-      g.fillStyle(0x000000, 0.85);
-      g.fillCircle(cx - bodyRx * 1.0, cy - bodyRy * 0.2, 1.6);
-      g.fillCircle(cx - bodyRx * 1.0, cy + bodyRy * 0.2, 1.6);
+      g.fillCircle(cx - bodyRx * 0.85, cy, bodyRy * 0.55);
+      g.fillStyle(color, 1);
+      g.fillCircle(cx - bodyRx * 1.0, cy - bodyRy * 0.4, bodyRy * 0.22);
+      g.fillCircle(cx - bodyRx * 1.0, cy + bodyRy * 0.4, bodyRy * 0.22);
+      g.lineStyle(1, 0x000000, 0.3);
+      g.strokeCircle(cx - bodyRx * 1.0, cy - bodyRy * 0.4, bodyRy * 0.22);
+      g.strokeCircle(cx - bodyRx * 1.0, cy + bodyRy * 0.4, bodyRy * 0.22);
+      drawCuteEyes(cx - bodyRx * 0.8, cy, bodyRy * 0.28);
     } else {
       // bombardier: 길쭉한 몸 + 꼬리 쪽 경고색 밴드(원거리 공격을 예고하는 폭탄먼지벌레)
       g.fillStyle(color, 1);
-      g.fillEllipse(cx, cy, bodyRx * 2.1, bodyRy * 1.7);
-      g.lineStyle(1.4, 0x000000, 0.4);
-      g.strokeEllipse(cx, cy, bodyRx * 2.1, bodyRy * 1.7);
+      g.fillEllipse(cx, cy, bodyRx * 2.1, bodyRy * 1.8);
+      g.lineStyle(1.4, 0x000000, 0.35);
+      g.strokeEllipse(cx, cy, bodyRx * 2.1, bodyRy * 1.8);
       g.fillStyle(spotColor, 1);
-      g.fillEllipse(cx + bodyRx * 0.75, cy, bodyRx * 0.6, bodyRy * 1.5);
-      g.fillStyle(0x0f2a22, 1);
-      g.fillCircle(cx - bodyRx * 0.95, cy, bodyRy * 0.45);
-      g.fillStyle(0xffffff, 0.9);
-      g.fillCircle(cx - bodyRx * 1.15, cy - bodyRy * 0.2, 1.5);
-      g.fillCircle(cx - bodyRx * 1.15, cy + bodyRy * 0.2, 1.5);
+      g.fillEllipse(cx + bodyRx * 0.7, cy, bodyRx * 0.5, bodyRy * 1.4);
+      drawCuteEyes(cx - bodyRx * 0.85, cy, bodyRy * 0.26);
     }
 
     g.generateTexture(key, size, size);
@@ -275,6 +289,18 @@ export default class GameScene extends Phaser.Scene {
     g.fillStyle(0xb8860b, 0.9);
     g.fillRect(7.2, 4, 1.6, 8);
     g.generateTexture("tex-coin", 16, 16);
+    g.destroy();
+  }
+
+  // 논타겟팅 광역 스킬(Q) VFX용 링 텍스처 - 시전 위치에서 스케일업하며 퍼지는 충격파처럼 쓴다.
+  makeAoeRingTexture() {
+    const r = 64;
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.lineStyle(4, 0xffe066, 0.9);
+    g.strokeCircle(r, r, r - 3);
+    g.lineStyle(2, 0xffffff, 0.6);
+    g.strokeCircle(r, r, r - 10);
+    g.generateTexture("tex-aoe-ring", r * 2, r * 2);
     g.destroy();
   }
 
@@ -469,6 +495,10 @@ export default class GameScene extends Phaser.Scene {
       this.input.keyboard.on(`keydown-${keyName}`, () => this.handleHotbarKey(index));
     });
 
+    // Space: 대시(회피), Q: 논타겟팅 광역 스킬
+    this.input.keyboard.on("keydown-SPACE", () => this.handleDash());
+    this.input.keyboard.on("keydown-Q", () => this.handleAoeSkill());
+
     // 첫 클릭/키 입력에서 오디오 컨텍스트를 깨워둔다(브라우저 자동재생 정책 - 사용자 제스처 필요)
     this.input.once("pointerdown", () => unlockAudio());
     this.input.keyboard.once("keydown", () => unlockAudio());
@@ -487,7 +517,7 @@ export default class GameScene extends Phaser.Scene {
     initUI({
       onSlotClick: (index, def) => {
         if (!def) return;
-        if (def.type === "consumable") this.network.useItem(index);
+        if (def.type === "consumable") this.useConsumable(index, def);
         else this.network.equipItem(index);
       },
       onBuy: (itemId) => this.network.buyItem(itemId),
@@ -617,6 +647,7 @@ export default class GameScene extends Phaser.Scene {
       },
       onMonsterDied: ({ id }) => this.removeMonster(id),
       onMonsterAttack: ({ id }) => this.lungeMonster(id),
+      onAoeAttack: ({ x, y }) => this.spawnAoeRing(x, y),
       onMonstersUpdated: (list) => {
         list.forEach(({ id, x, y, hp, maxHp }) => {
           const entry = this.monsters.get(id);
@@ -1016,6 +1047,69 @@ export default class GameScene extends Phaser.Scene {
     toggleNpcDialogue();
   }
 
+  // 대시(회피): 현재 누르고 있는 이동키 방향으로 짧게 폭발적으로 가속한다(안 누르고 있으면
+  // 캐릭터가 바라보는 방향으로). 쿨다운은 클라이언트가 UI 표시용으로 먼저 체크하고, 서버도
+  // dash 이벤트를 받을 때마다 재검증해서(무적 스팸 방지) 최종적으로 authoritative하게 막는다.
+  handleDash() {
+    if (!this.localPlayer || !this.network || this.menuOpen) return;
+    const now = this.time.now;
+    if (now < this.dashCooldownUntil) return;
+    this.dashCooldownUntil = now + DASH_COOLDOWN_MS;
+
+    let vx = 0;
+    let vy = 0;
+    if (this.moveKeys.left.isDown || this.cursorKeys.left.isDown) vx -= 1;
+    if (this.moveKeys.right.isDown || this.cursorKeys.right.isDown) vx += 1;
+    if (this.moveKeys.up.isDown || this.cursorKeys.up.isDown) vy -= 1;
+    if (this.moveKeys.down.isDown || this.cursorKeys.down.isDown) vy += 1;
+
+    if (vx === 0 && vy === 0) {
+      vx = Math.cos(this.localPlayer.rotation);
+      vy = Math.sin(this.localPlayer.rotation);
+    } else {
+      const len = Math.hypot(vx, vy);
+      vx /= len;
+      vy /= len;
+    }
+
+    this.dashDirX = vx;
+    this.dashDirY = vy;
+    this.dashActiveUntil = now + DASH_DURATION_MS;
+    this.dashTrailTimer = 0;
+
+    this.network.sendDash();
+    playDashSound();
+  }
+
+  // 논타겟팅 광역 스킬(Q): 클릭 조준 없이 캐릭터 주변 반경 안의 모든 몬스터를 때린다.
+  // 실제 피해 판정/쿨다운 검증은 서버가 하고, VFX는 서버가 되쏴주는 aoeAttack 이벤트를 받아서 그린다
+  // (근접/화살 공격과 같은 패턴 - 공격자 화면에서만 보이는 게 아니라 모두에게 브로드캐스트됨).
+  handleAoeSkill() {
+    if (!this.localPlayer || !this.network || this.menuOpen) return;
+    const now = this.time.now;
+    if (now < this.skillCooldownUntil) return;
+    this.skillCooldownUntil = now + AOE_SKILL_COOLDOWN_MS;
+
+    this.network.sendAoeAttack();
+    playAoeSkillSound();
+  }
+
+  // 시전 위치에서 스케일업하며 퍼지는 충격파 링 - 광역 스킬의 범위를 눈으로 보여준다.
+  spawnAoeRing(x, y) {
+    const ring = this.add.image(x, y, "tex-aoe-ring");
+    ring.setDepth(TOP_DEPTH);
+    ring.setScale(0.12);
+    ring.setAlpha(0.9);
+    this.tweens.add({
+      targets: ring,
+      scale: (AOE_SKILL_RADIUS / 64) * 1.05,
+      alpha: 0,
+      duration: 380,
+      ease: "Cubic.Out",
+      onComplete: () => ring.destroy(),
+    });
+  }
+
   // 숫자키 1~5: 핫바(인벤토리 앞 5칸)의 아이템을 클릭한 것과 똑같이 장착/사용한다.
   handleHotbarKey(index) {
     if (!this.network) return;
@@ -1023,8 +1117,21 @@ export default class GameScene extends Phaser.Scene {
     const def = slot && ITEMS[slot.itemId];
     if (!def) return;
 
-    if (def.type === "consumable") this.network.useItem(index);
+    if (def.type === "consumable") this.useConsumable(index, def);
     else this.network.equipItem(index);
+  }
+
+  // 소비 아이템 공용 처리 - 서버에 소모 요청을 보내고, 신속의 물약처럼 클라이언트 로컬 효과가
+  // 있는 아이템이면 그 효과도 함께 시작한다(이동 속도는 기존에도 클라이언트가 계산하는 값이라
+  // 서버에 별도 상태를 두지 않고 여기서만 처리해도 충분함).
+  useConsumable(index, def) {
+    this.network.useItem(index);
+    if (def.effect?.hasteMultiplier) {
+      const durationMs = def.effect.hasteDurationMs ?? 5000;
+      this.hasteMultiplier = def.effect.hasteMultiplier;
+      this.hasteUntil = this.time.now + durationMs;
+      showToast(`신속 효과! ${(durationMs / 1000).toFixed(0)}초 동안 이동 속도 증가`);
+    }
   }
 
   update(time, delta) {
@@ -1047,9 +1154,34 @@ export default class GameScene extends Phaser.Scene {
     this.interpolateMonsters();
     this.updateArrows(time, delta);
     this.updateMonsterProjectiles(time, delta);
+    this.updateDashTrail(time, delta);
     this.updateMinimap();
     this.updateShopProximityCheck();
     this.updateQuestNpcProximityCheck();
+    this.updateAbilityCooldownUI(time);
+  }
+
+  // 대시 지속시간 동안 25ms마다 반투명 잔상을 남겨 "빠르게 스쳐 지나갔다"는 느낌을 준다.
+  updateDashTrail(time, delta) {
+    if (!this.localPlayer || time >= this.dashActiveUntil) return;
+
+    this.dashTrailTimer += delta;
+    if (this.dashTrailTimer < 25) return;
+    this.dashTrailTimer = 0;
+
+    const ghost = this.add.image(this.localPlayer.x, this.localPlayer.y, "tex-player");
+    ghost.setTint(this.localPlayer._pjhColor ?? 0xffffff);
+    ghost.setRotation(this.localPlayer.rotation);
+    ghost.setAlpha(0.35);
+    ghost.setDepth(this.localPlayer.y - 1);
+    this.tweens.add({ targets: ghost, alpha: 0, duration: 220, onComplete: () => ghost.destroy() });
+  }
+
+  // 대시/광역 스킬 쿨다운 아이콘을 매 프레임 갱신(단순 CSS transform이라 비용이 작음)
+  updateAbilityCooldownUI(time) {
+    const dashRatio = (this.dashCooldownUntil - time) / DASH_COOLDOWN_MS;
+    const skillRatio = (this.skillCooldownUntil - time) / AOE_SKILL_COOLDOWN_MS;
+    updateAbilityCooldowns(dashRatio, skillRatio);
   }
 
   updateShopProximityCheck() {
@@ -1097,6 +1229,14 @@ export default class GameScene extends Phaser.Scene {
 
   handleMovement() {
     const body = this.localPlayer.body;
+
+    // 대시 지속시간 동안은 눌려있는 키와 무관하게 대시 방향으로 고정 가속한다.
+    if (this.time.now < this.dashActiveUntil) {
+      const dashSpeed = PLAYER_SPEED * DASH_SPEED_MULTIPLIER;
+      body.setVelocity(this.dashDirX * dashSpeed, this.dashDirY * dashSpeed);
+      return;
+    }
+
     let vx = 0;
     let vy = 0;
 
@@ -1110,6 +1250,7 @@ export default class GameScene extends Phaser.Scene {
       let speed = PLAYER_SPEED;
       const tile = this.currentTileType();
       if (tile === TILE_TYPES.WATER) speed *= WATER_SPEED_MULTIPLIER;
+      if (this.time.now < this.hasteUntil) speed *= this.hasteMultiplier;
       vx = (vx / len) * speed;
       vy = (vy / len) * speed;
     }

@@ -50,6 +50,14 @@ export function playPickupSound() {
   tone({ freq: 700, endFreq: 1000, duration: 0.06, type: "sine", startGain: 0.06 });
 }
 
+export function playDashSound() {
+  tone({ freq: 260, endFreq: 900, duration: 0.1, type: "sine", startGain: 0.06 });
+}
+
+export function playAoeSkillSound() {
+  tone({ freq: 240, endFreq: 50, duration: 0.28, type: "sawtooth", startGain: 0.1 });
+}
+
 export function playLevelUpSound() {
   [523, 659, 784, 1047].forEach((freq, i) => {
     setTimeout(() => tone({ freq, duration: 0.18, type: "triangle", startGain: 0.09 }), i * 90);

@@ -46,6 +46,10 @@ const backdrop = document.getElementById("modal-backdrop");
 const toastEl = document.getElementById("toast");
 const interactPromptEl = document.getElementById("interact-prompt");
 
+// ---- 대시/광역 스킬 쿨다운 ----
+const dashCooldownEl = document.querySelector("#dash-icon .ability-cooldown-overlay");
+const skillCooldownEl = document.querySelector("#skill-icon .ability-cooldown-overlay");
+
 let activeModal = null; // 'inventory' | 'shop' | 'admin' | null
 let currentCharacter = null;
 let shopNear = false;
@@ -320,6 +324,13 @@ function renderShopModal(character) {
     empty.textContent = "판매할 아이템이 없습니다";
     shopSellGridEl.appendChild(empty);
   }
+}
+
+// dashRatio/skillRatio: 1 = 방금 사용해서 꽉 참, 0 = 재사용 가능. 위쪽부터 어두운 오버레이가
+// 걷히는 방식(scaleY, bottom 기준)으로 표준적인 게임 쿨다운 스와이프 느낌을 낸다.
+export function updateAbilityCooldowns(dashRatio, skillRatio) {
+  dashCooldownEl.style.transform = `scaleY(${Math.max(0, Math.min(1, dashRatio))})`;
+  skillCooldownEl.style.transform = `scaleY(${Math.max(0, Math.min(1, skillRatio))})`;
 }
 
 let toastTimer = null;

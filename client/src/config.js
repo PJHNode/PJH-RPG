@@ -15,5 +15,13 @@ export const SHOP_INTERACT_RADIUS = 96;
 
 export const MONSTER_PROJECTILE_LIFETIME_MS = 1500;
 
+export const DASH_SPEED_MULTIPLIER = 2.6;
+export const DASH_DURATION_MS = 160;
+export const DASH_COOLDOWN_MS = 2200;
+export const DASH_INVULN_MS = 200;
+
+export const AOE_SKILL_RADIUS = 90;
+export const AOE_SKILL_COOLDOWN_MS = 4500;
+
 // GRASS_EDGE/DIRT_EDGE는 풀-흙 경계를 부드럽게 보이게 하는 디더 텍스처용 시각 전용 타일.
 export const TILE_TYPES = { GRASS: 0, DIRT: 1, SAND: 2, WATER: 3, GRASS_EDGE: 4, DIRT_EDGE: 5 };

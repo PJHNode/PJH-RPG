@@ -31,4 +31,17 @@ module.exports = {
   // 몬스터 원거리 공격(게)의 투사체. 속도는 몬스터 종류마다 달라서 이벤트에 실어 보내지만,
   // 수명은 공통값이라 여기서 공유한다.
   MONSTER_PROJECTILE_LIFETIME_MS: 1500,
+
+  // 대시(회피): Space를 누르면 짧게 폭발적으로 가속하고, 그동안 무적(피격 무시)이 된다.
+  // 이동 속도 자체는 클라이언트가 계산해 보내지만(기존 이동 판정과 동일), 무적 판정과
+  // 재사용대기시간 검증은 서버가 authoritative하게 한다(dash 이벤트 스팸으로 무적 악용 방지).
+  DASH_SPEED_MULTIPLIER: 2.6,
+  DASH_DURATION_MS: 160,
+  DASH_COOLDOWN_MS: 2200,
+  DASH_INVULN_MS: 200,
+
+  // 논타겟팅 광역 스킬(Q): 무기 종류와 무관하게 캐릭터 주변 반경 안의 모든 몬스터를 때린다.
+  AOE_SKILL_RADIUS: 90,
+  AOE_SKILL_COOLDOWN_MS: 4500,
+  AOE_SKILL_DAMAGE_MULTIPLIER: 0.7, // 단일 대상 근접보다 약하게(광역이라 밸런스상 페널티)
 };
